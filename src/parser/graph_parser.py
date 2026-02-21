@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,7 +114,9 @@ def path_to_module_path(project_root: Path, file_path: Path) -> str:
 def parse_python_file(file_path: Path) -> ast.AST | None:
     try:
         source = file_path.read_text(encoding="utf-8")
-        return ast.parse(source)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(source, filename=str(file_path))
     except SyntaxError as e:
         logger.warning("Skipping %s: syntax error: %s", file_path, e)
         return None
@@ -171,7 +174,9 @@ def extract_function_source(file_path: Path, qualified_name: str) -> str:
     """
     try:
         source = file_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(source, filename=str(file_path))
 
         parts = qualified_name.split(".")
 
