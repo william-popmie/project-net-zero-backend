@@ -50,26 +50,15 @@ from optimizer_logic.function_spec import FunctionSpec          # noqa: E402
 from convertor.inplace_rewriter import rewrite_functions_inplace  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Run
+# Pipeline
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Optimize Python functions in a project directory."
-    )
-    parser.add_argument(
-        "project_dir",
-        nargs="?",
-        default=str(SRC_DIR / "../input-repo"),
-        help="Path to the project directory to optimize (default: input-repo/)",
-    )
-    args = parser.parse_args()
+def run_pipeline(project_path: Path) -> list[dict]:
+    """Run the full optimization pipeline (Phase 1 + 2 + 3) on *project_path*.
 
-    project_path = Path(args.project_dir).resolve()
-    if not project_path.exists() or not project_path.is_dir():
-        print(f"[ERROR] project_path does not exist: {project_path}")
-        sys.exit(1)
-
+    Returns the list of optimizer result dicts.
+    """
+    # ── Phase 1: Spec-logic (analyse & generate tests) ───────────────────
     output = run_workflow(
         project_root=project_path,
         output_path=Path(CONFIG["output"]),
@@ -81,16 +70,12 @@ if __name__ == "__main__":
     failed = [f for f in functions if f["status"] == "failed"]
 
     if failed:
-        print("\nFailed functions:")
-        for f in failed:
-            print(f"  - {f['id']}")
-            for err in f.get("errors", []):
-                print(f"      {err}")
-        sys.exit(1)
+        names = [f["id"] for f in failed]
+        print(f"\n[pipeline] failed functions: {names}")
 
-    # ── Phase 2: Optimize ────────────────────────────────────────────────────
+    # ── Phase 2: Optimize ────────────────────────────────────────────────
     optimizer_results = []
-    for func_result in output.get("functions", []):
+    for func_result in functions:
         if func_result["status"] not in ("passed_existing", "generated"):
             continue
         if not func_result["function_code"] or not func_result["test_code"]:
@@ -120,6 +105,32 @@ if __name__ == "__main__":
         }, indent=2)
     )
 
-    # ── Phase 3: Rewrite in-place ────────────────────────────────────────────
+    # ── Phase 3: Rewrite in-place ────────────────────────────────────────
     modified = rewrite_functions_inplace(project_path, optimizer_results)
     print(f"\n[rewriter] {len(modified)} file(s) updated in {project_path}")
+
+    return optimizer_results
+
+
+# ---------------------------------------------------------------------------
+# CLI entry-point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Optimize Python functions in a project directory."
+    )
+    parser.add_argument(
+        "project_dir",
+        nargs="?",
+        default=str(SRC_DIR / "../input-repo"),
+        help="Path to the project directory to optimize (default: input-repo/)",
+    )
+    args = parser.parse_args()
+
+    project_path = Path(args.project_dir).resolve()
+    if not project_path.exists() or not project_path.is_dir():
+        print(f"[ERROR] project_path does not exist: {project_path}")
+        sys.exit(1)
+
+    run_pipeline(project_path)
