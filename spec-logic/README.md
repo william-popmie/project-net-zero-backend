@@ -1,6 +1,6 @@
 # Spec Logic Parser
 
-Deze map bevat de parser/analyzer-logic met support voor heuristic matching en optioneel Claude AI matching.
+Deze map bevat de parser/analyzer-logic met support voor heuristic matching, Claude AI matching, en een volledige **LangGraph workflow** voor geautomatiseerde spec generation.
 
 De `input` map blijft puur voor het inputproject.
 
@@ -24,7 +24,53 @@ cd spec-logic
 pip install -e .
 ```
 
-## Run op inputproject
+## LangGraph Workflow (Aanbevolen voor volledig proces)
+
+De **LangGraph workflow** is een complete pipeline die automatisch:
+
+1. **AST parsing** - Analyseert je Python project en bouwt de function graph
+2. **Test matching** - Matcht test functies met project functies (heuristic of AI)
+3. **Test execution & Coverage** - Runt pytest met coverage.py validatie
+4. **Spec generation** - Genereert automatisch extra tests als coverage te laag is
+5. **Output generation** - Produceert complete AST tree structure met alle data
+
+### Run de workflow
+
+```bash
+# PowerShell
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+
+# Bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Run de workflow
+python -m function_spec_graph.workflow_cli ../input/sample_project \
+  --coverage-threshold 80 \
+  --max-iterations 3 \
+  --use-ai-matching
+```
+
+**Parameters:**
+
+- `--coverage-threshold`: Minimum code coverage % vereist (default: 80)
+- `--max-iterations`: Max aantal iteraties voor spec generation (default: 3)
+- `--use-ai-matching`: Gebruik Claude AI voor test matching
+
+**Workflow logica:**
+
+- Als tests **falen** OF coverage **< threshold** → genereer extra specs met AI
+- Herhaal tot coverage threshold bereikt OF max iterations bereikt
+- Output: Complete AST tree structure in `output/langgraph_workflow/`
+
+**Output files:**
+
+- `final_graph.json` - Complete graph met alle nodes en edges
+- `final_graph.mmd` - Mermaid diagram
+- `final_coverage_report.html` - HTML coverage report
+- `ast_summary.txt` - Readable AST tree structure met spec mappings
+- `coverage.json` - Pytest coverage data (in project root)
+
+## Run op inputproject (Individuele stappen)
 
 ### Heuristic matching (default, snel)
 
