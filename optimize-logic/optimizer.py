@@ -21,7 +21,7 @@ def _make_initial_state(spec: FunctionSpec, engine: str = "claude") -> dict:
 
 
 def optimize_function(spec: FunctionSpec, engine: str = "claude") -> str:
-    graph = build_graph(engine=engine)
+    graph = build_graph()
     initial_state = _make_initial_state(spec, engine)
     final_state = graph.invoke(initial_state)
     return final_state["current_source"]
@@ -29,7 +29,7 @@ def optimize_function(spec: FunctionSpec, engine: str = "claude") -> str:
 
 def run_engine(spec: FunctionSpec, engine: str) -> dict:
     """Run a single engine and return full result dict for benchmarking."""
-    graph = build_graph(engine=engine)
+    graph = build_graph()
     initial_state = _make_initial_state(spec, engine)
     final_state = graph.invoke(initial_state)
     return {

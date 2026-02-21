@@ -2,11 +2,8 @@ import os
 import subprocess
 import sys
 import tempfile
-import re
-import time
 from typing import TypedDict
 
-import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,7 +11,7 @@ from langgraph.graph import StateGraph, END
 
 from function_spec import FunctionSpec
 from emissions import measure_emissions_for_source
-import crusoe_client
+import llm_client
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -51,44 +48,21 @@ def measure_baseline(state: OptimizerState) -> OptimizerState:
 
 def optimize(state: OptimizerState) -> OptimizerState:
     attempt = state["attempt"] + 1
-    print(f"[optimize] attempt {attempt}/{state['max_attempts']}")
+    print(f"[optimize] attempt {attempt}/{state['max_attempts']} (engine={state['engine']})")
 
     spec = state["spec"]
-    client = anthropic.Anthropic()
+    last_test_output = state["last_test_output"] if attempt > 1 else ""
 
-    user_content = (
-        f"Optimize the following Python function to use less CPU and memory "
-        f"(and therefore less energy/carbon emissions). "
-        f"Return ONLY the optimized function inside a ```python code block. "
-        f"Do not include any explanation.\n\n"
-        f"```python\n{state['current_source']}\n```"
+    result = llm_client.rewrite(
+        source_code=state["current_source"],
+        test_code=spec.test_source,
+        last_test_output=last_test_output,
+        engine=state["engine"],
     )
 
-    if attempt > 1 and state["last_test_output"]:
-        user_content += (
-            f"\n\nThe previous version failed the tests. Here is the output:\n"
-            f"```\n{state['last_test_output']}\n```\n"
-            f"Make sure the optimized function still passes these tests:\n"
-            f"```python\n{spec.test_source}\n```"
-        )
-
-    start = time.time()
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=2048,
-        system=(
-            "You are an expert Python performance engineer. "
-            "When asked to optimize a function, return ONLY the optimized function "
-            "inside a single ```python code block. No explanations, no other text."
-        ),
-        messages=[{"role": "user", "content": user_content}],
-    )
-    call_duration = time.time() - start
-
-    raw = message.content[0].text
-    # Strip fences
-    match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
-    optimized_source = match.group(1).strip() if match else raw.strip()
+    optimized_source = result["rewritten_code"]
+    call_duration = result["duration_seconds"]
+    tokens = result["usage"].get("total_tokens", 0)
 
     print(f"[optimize] got optimized source ({len(optimized_source)} chars) in {call_duration:.1f}s")
     return {
@@ -96,30 +70,7 @@ def optimize(state: OptimizerState) -> OptimizerState:
         "current_source": optimized_source,
         "attempt": attempt,
         "inference_duration": state.get("inference_duration", 0) + call_duration,
-        "inference_tokens": state.get("inference_tokens", 0) + message.usage.input_tokens + message.usage.output_tokens,
-    }
-
-
-def optimize_crusoe(state: OptimizerState) -> OptimizerState:
-    attempt = state["attempt"] + 1
-    print(f"[optimize_crusoe] attempt {attempt}/{state['max_attempts']}")
-
-    spec = state["spec"]
-    last_test_output = state["last_test_output"] if attempt > 1 else ""
-
-    result = crusoe_client.rewrite(
-        source_code=state["current_source"],
-        test_code=spec.test_source if last_test_output else "",
-        last_test_output=last_test_output,
-    )
-
-    print(f"[optimize_crusoe] got optimized source ({len(result['rewritten_code'])} chars) in {result['duration_seconds']}s")
-    return {
-        **state,
-        "current_source": result["rewritten_code"],
-        "attempt": attempt,
-        "inference_duration": state.get("inference_duration", 0) + result["duration_seconds"],
-        "inference_tokens": state.get("inference_tokens", 0) + result["usage"].get("total_tokens", 0),
+        "inference_tokens": state.get("inference_tokens", 0) + tokens,
     }
 
 
@@ -193,65 +144,33 @@ def route_after_emissions(state: OptimizerState) -> str:
         return "save_output"
     if state["attempt"] < state["max_attempts"]:
         return "optimize"
-    return END
+    return "save_output"
 
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
-def route_after_tests_crusoe(state: OptimizerState) -> str:
-    if state["test_passed"]:
-        return "measure_emissions"
-    if state["attempt"] < state["max_attempts"]:
-        return "optimize_crusoe"
-    return END
-
-
-def route_after_emissions_crusoe(state: OptimizerState) -> str:
-    if state["current_emissions"] < state["baseline_emissions"]:
-        return "save_output"
-    if state["attempt"] < state["max_attempts"]:
-        return "optimize_crusoe"
-    return END
-
-
-def build_graph(engine: str = "claude"):
+def build_graph():
     builder = StateGraph(OptimizerState)
 
     builder.add_node("measure_baseline", measure_baseline)
+    builder.add_node("optimize", optimize)
     builder.add_node("run_tests", run_tests)
     builder.add_node("measure_emissions", measure_emissions)
     builder.add_node("save_output", save_output)
 
-    if engine == "crusoe":
-        builder.add_node("optimize_crusoe", optimize_crusoe)
-        builder.set_entry_point("measure_baseline")
-        builder.add_edge("measure_baseline", "optimize_crusoe")
-        builder.add_edge("optimize_crusoe", "run_tests")
-        builder.add_conditional_edges(
-            "run_tests",
-            route_after_tests_crusoe,
-            {"measure_emissions": "measure_emissions", "optimize_crusoe": "optimize_crusoe", END: END},
-        )
-        builder.add_conditional_edges(
-            "measure_emissions",
-            route_after_emissions_crusoe,
-            {"save_output": "save_output", "optimize_crusoe": "optimize_crusoe", END: END},
-        )
-    else:
-        builder.add_node("optimize", optimize)
-        builder.set_entry_point("measure_baseline")
-        builder.add_edge("measure_baseline", "optimize")
-        builder.add_edge("optimize", "run_tests")
-        builder.add_conditional_edges(
-            "run_tests",
-            route_after_tests,
-            {"measure_emissions": "measure_emissions", "optimize": "optimize", END: END},
-        )
-        builder.add_conditional_edges(
-            "measure_emissions",
-            route_after_emissions,
-            {"save_output": "save_output", "optimize": "optimize", END: END},
-        )
-
+    builder.set_entry_point("measure_baseline")
+    builder.add_edge("measure_baseline", "optimize")
+    builder.add_edge("optimize", "run_tests")
+    builder.add_conditional_edges(
+        "run_tests",
+        route_after_tests,
+        {"measure_emissions": "measure_emissions", "optimize": "optimize", END: END},
+    )
+    builder.add_conditional_edges(
+        "measure_emissions",
+        route_after_emissions,
+        {"save_output": "save_output", "optimize": "optimize"},
+    )
     builder.add_edge("save_output", END)
+
     return builder.compile()
