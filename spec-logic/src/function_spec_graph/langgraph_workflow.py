@@ -113,6 +113,22 @@ def execute_tests_and_coverage_node(state: WorkflowState) -> WorkflowState:
     project_root = state["project_root"]
     
     try:
+        # Clean pytest cache to avoid import conflicts
+        print("[*] Cleaning pytest cache...")
+        import shutil
+        cache_dirs = [
+            project_root / ".pytest_cache",
+            project_root / "__pycache__",
+            project_root / "tests" / "__pycache__",
+            # Note: Do NOT delete tests/app - it may contain generated tests!
+            # project_root / "tests" / "app",  
+            project_root / "src" / "__pycache__",
+            project_root / "src" / "app" / "__pycache__",
+        ]
+        for cache_dir in cache_dirs:
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir, ignore_errors=True)
+        
         # Run pytest with coverage
         print("[*] Running pytest with coverage.py...")
         

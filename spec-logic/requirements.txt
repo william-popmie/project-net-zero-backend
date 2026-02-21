@@ -4,6 +4,8 @@ langgraph>=0.2.0
 langchain-core>=0.3.0
 coverage>=7.0.0
 pytest>=8.3.4
+pytest-cov>=7.0.0
+python-dotenv>=1.0.0
 
 # Optional dev tooling:
 # ruff==0.9.6

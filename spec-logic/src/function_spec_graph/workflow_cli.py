@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .langgraph_workflow import run_workflow
 
 
@@ -40,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # Load environment variables from .env file
+    load_dotenv()
+    
     parser = build_parser()
     args = parser.parse_args()
 

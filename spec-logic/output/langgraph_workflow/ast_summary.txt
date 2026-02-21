@@ -14,17 +14,37 @@ Function: src.app.math_utils.multiply
 
 Function: src.app.math_utils.subtract
   File: src/app/math_utils.py:9
-  Specs: [NONE - UNTESTED]
+  Specs (9):
+    - tests.app.test_math_utils.TestSubtract.test_subtract_positive_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_negative_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_mixed_sign_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_with_zero (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_large_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_identity_property (confidence: direct_call)
+    - tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property (confidence: direct_call)
 
 Function: src.app.math_utils.divide
   File: src/app/math_utils.py:14
-  Specs: [NONE - UNTESTED]
+  Specs (11):
+    - tests.app.test_math_utils.TestDivide.test_divide_positive_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_negative_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_with_floats (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_by_one (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_by_negative_one (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_small_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_large_numbers (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_by_zero_raises_value_error (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error (confidence: direct_call)
+    - tests.app.test_math_utils.TestDivide.test_divide_result_is_float (confidence: direct_call)
 
 
 ============================================================
 WORKFLOW SUMMARY
 ============================================================
 
-Coverage: 60.0%
-Tests passed: False
+Coverage: 100.0%
+Tests passed: True
 Spec generation iterations: 1

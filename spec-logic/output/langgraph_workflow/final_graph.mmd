@@ -5,5 +5,45 @@ flowchart LR
     src_app_math_utils_divide["src.app.math_utils.divide"]
     tests_test_math_utils_test_add_returns_sum(["tests.test_math_utils.test_add_returns_sum"])
     tests_test_math_utils_test_multiply_returns_product(["tests.test_math_utils.test_multiply_returns_product"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_positive_numbers(["tests.app.test_math_utils.TestSubtract.test_subtract_positive_numbers"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_negative_numbers(["tests.app.test_math_utils.TestSubtract.test_subtract_negative_numbers"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_mixed_sign_numbers(["tests.app.test_math_utils.TestSubtract.test_subtract_mixed_sign_numbers"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_with_zero(["tests.app.test_math_utils.TestSubtract.test_subtract_with_zero"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_large_numbers(["tests.app.test_math_utils.TestSubtract.test_subtract_large_numbers"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_resulting_in_negative(["tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_commutative_property(["tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_identity_property(["tests.app.test_math_utils.TestSubtract.test_subtract_identity_property"])
+    tests_app_test_math_utils_TestSubtract_test_subtract_inverse_property(["tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property"])
+    tests_app_test_math_utils_TestDivide_test_divide_positive_numbers(["tests.app.test_math_utils.TestDivide.test_divide_positive_numbers"])
+    tests_app_test_math_utils_TestDivide_test_divide_negative_numbers(["tests.app.test_math_utils.TestDivide.test_divide_negative_numbers"])
+    tests_app_test_math_utils_TestDivide_test_divide_with_floats(["tests.app.test_math_utils.TestDivide.test_divide_with_floats"])
+    tests_app_test_math_utils_TestDivide_test_divide_by_one(["tests.app.test_math_utils.TestDivide.test_divide_by_one"])
+    tests_app_test_math_utils_TestDivide_test_divide_zero_as_numerator(["tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator"])
+    tests_app_test_math_utils_TestDivide_test_divide_by_negative_one(["tests.app.test_math_utils.TestDivide.test_divide_by_negative_one"])
+    tests_app_test_math_utils_TestDivide_test_divide_small_numbers(["tests.app.test_math_utils.TestDivide.test_divide_small_numbers"])
+    tests_app_test_math_utils_TestDivide_test_divide_large_numbers(["tests.app.test_math_utils.TestDivide.test_divide_large_numbers"])
+    tests_app_test_math_utils_TestDivide_test_divide_by_zero_raises_value_error(["tests.app.test_math_utils.TestDivide.test_divide_by_zero_raises_value_error"])
+    tests_app_test_math_utils_TestDivide_test_divide_by_zero_float_raises_value_error(["tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error"])
+    tests_app_test_math_utils_TestDivide_test_divide_result_is_float(["tests.app.test_math_utils.TestDivide.test_divide_result_is_float"])
     src_app_math_utils_add -->|validated_by| tests_test_math_utils_test_add_returns_sum
     src_app_math_utils_multiply -->|validated_by| tests_test_math_utils_test_multiply_returns_product
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_positive_numbers
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_negative_numbers
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_mixed_sign_numbers
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_with_zero
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_large_numbers
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_resulting_in_negative
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_commutative_property
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_identity_property
+    src_app_math_utils_subtract -->|validated_by| tests_app_test_math_utils_TestSubtract_test_subtract_inverse_property
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_positive_numbers
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_negative_numbers
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_with_floats
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_by_one
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_zero_as_numerator
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_by_negative_one
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_small_numbers
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_large_numbers
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_by_zero_raises_value_error
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_by_zero_float_raises_value_error
+    src_app_math_utils_divide -->|validated_by| tests_app_test_math_utils_TestDivide_test_divide_result_is_float

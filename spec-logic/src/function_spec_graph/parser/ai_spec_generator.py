@@ -54,19 +54,40 @@ Respond with ONLY the Python test code (no markdown, no explanations).
 Include all necessary imports at the top."""
 
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-opus-4-1",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return response.content[0].text.strip()
+    test_code = response.content[0].text.strip()
+    
+    # Remove markdown code fencing if present
+    if test_code.startswith("```"):
+        lines = test_code.split("\n")
+        # Find the first ```python or ``` line
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if line.startswith("```"):
+                start_idx = i + 1
+                break
+        
+        # Find the closing ``` line
+        end_idx = len(lines)
+        for i in range(start_idx + 1, len(lines)):
+            if lines[i].startswith("```"):
+                end_idx = i
+                break
+        
+        test_code = "\n".join(lines[start_idx:end_idx]).strip()
+    
+    return test_code
 
 
 def determine_test_file_path(project_root: Path, source_file_path: str) -> Path:
     """
     Determine where the test file should be placed.
     
-    Convention: src/app/math_utils.py -> tests/test_math_utils.py
+    Convention: src/app/math_utils.py -> tests/app/test_math_utils.py
     """
     source_path = Path(source_file_path)
     
@@ -80,6 +101,7 @@ def determine_test_file_path(project_root: Path, source_file_path: str) -> Path:
     test_filename = f"test_{filename}.py"
     
     test_dir = project_root / "tests"
+    # Add subdirectories (e.g., app/) but not the file itself
     if len(parts) > 1:
         test_dir = test_dir / Path(*parts[:-1])
     
@@ -180,6 +202,11 @@ def generate_specs_for_untested(
             
             if test_code_parts and not dry_run:
                 test_file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Create __init__.py to make tests/app a package (avoids pytest module name conflicts)
+                init_py = test_file_path.parent / "__init__.py"
+                if not init_py.exists():
+                    init_py.write_text('', encoding="utf-8")
                 
                 # Merge with existing file if present
                 if test_file_path.exists():
