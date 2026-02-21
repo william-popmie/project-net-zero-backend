@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("output/coverage_report.html"),
         help="Output path for HTML coverage report.",
     )
+    parser.add_argument(
+        "--use-ai-matching",
+        action="store_true",
+        help="Use Claude AI to enhance test-function matching (requires ANTHROPIC_API_KEY).",
+    )
     return parser
 
 
@@ -47,7 +52,7 @@ def main() -> None:
     if not project_path.exists() or not project_path.is_dir():
         parser.error(f"Project path does not exist or is not a folder: {project_path}")
 
-    graph = build_graph(project_path)
+    graph = build_graph(project_path, use_ai_matching=args.use_ai_matching)
     write_graph_json(graph, args.output_json)
     write_graph_mermaid(graph, args.output_mermaid)
     write_graph_html(graph, args.output_html)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from .ai_matcher import MatchResult, match_with_ai
 
 EXCLUDED_DIR_NAMES = {
     ".git",
@@ -165,6 +168,43 @@ def collect_function_call_map(module_tree: ast.AST, module_path: str) -> dict[st
     return call_map
 
 
+def extract_function_source(
+    file_path: Path, qualified_name: str
+) -> str:
+    """Extract source code for a function by qualified name."""
+    try:
+        source = file_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        parts = qualified_name.split(".")
+        module_relative_parts = parts[1:] if "." in qualified_name else parts
+
+        def find_node(node: ast.AST, path: list[str]) -> ast.AST | None:
+            if not path:
+                return node
+            part = path[0]
+            remaining = path[1:]
+
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if child.name == part:
+                        return find_node(child, remaining)
+                elif isinstance(child, ast.ClassDef):
+                    if child.name == part:
+                        return find_node(child, remaining)
+            return None
+
+        target_node = find_node(tree, module_relative_parts)
+        if target_node and isinstance(
+            target_node, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            return ast.unparse(target_node)
+    except Exception:
+        pass
+
+    return ""
+
+
 def _calculate_coverage(
     source_nodes: list[FunctionNode],
     test_nodes: list[FunctionNode],
@@ -227,6 +267,8 @@ def _build_edges(
     source_nodes: list[FunctionNode],
     test_nodes: list[FunctionNode],
     test_called_names: dict[str, set[str]],
+    use_ai_matching: bool = False,
+    project_root: Path | None = None,
 ) -> list[GraphEdge]:
     source_node_ids_by_name: dict[str, list[str]] = defaultdict(list)
     for source_node in source_nodes:
@@ -253,6 +295,28 @@ def _build_edges(
                 if source_name.lower() in lowered_test_name:
                     matched_source_ids.update(source_ids)
 
+        if use_ai_matching and project_root and not matched_source_ids:
+            confidence = "ai"
+            test_src = extract_function_source(
+                project_root / test_node.file_path, test_node.id
+            )
+            for source_node in source_nodes:
+                if source_node.id in matched_source_ids:
+                    continue
+                try:
+                    source_src = extract_function_source(
+                        project_root / source_node.file_path, source_node.id
+                    )
+                    if test_src and source_src:
+                        result = match_with_ai(
+                            test_node.id, test_src,
+                            source_node.id, source_src
+                        )
+                        if result.matches and result.confidence_score > 0.7:
+                            matched_source_ids.add(source_node.id)
+                except Exception:
+                    pass
+
         for source_id in sorted(matched_source_ids):
             edges.append(
                 GraphEdge(
@@ -266,7 +330,7 @@ def _build_edges(
     return edges
 
 
-def build_graph(project_root: str | Path) -> dict[str, Any]:
+def build_graph(project_root: str | Path, use_ai_matching: bool = False) -> dict[str, Any]:
     root = Path(project_root).resolve()
 
     source_nodes: list[FunctionNode] = []
@@ -297,7 +361,13 @@ def build_graph(project_root: str | Path) -> dict[str, Any]:
             source_nodes.extend(collector.collected)
 
     all_nodes = source_nodes + test_nodes
-    edges = _build_edges(source_nodes, test_nodes, test_called_names)
+    edges = _build_edges(
+        source_nodes,
+        test_nodes,
+        test_called_names,
+        use_ai_matching=use_ai_matching,
+        project_root=root,
+    )
     coverage = _calculate_coverage(source_nodes, test_nodes, edges)
 
     return {
