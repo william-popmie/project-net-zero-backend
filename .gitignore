@@ -20,6 +20,15 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+coverage.json
+
+# Generated outputs & test data
+output/
+input/
+
+# Generated files
+*.mmd
+*.json
 
 # Environment files
 .env
@@ -29,5 +38,9 @@ htmlcov/
 # IDE / OS
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
+
