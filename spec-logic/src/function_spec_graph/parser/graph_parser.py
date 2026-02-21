@@ -176,25 +176,24 @@ def extract_function_source(
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
 
+        # Get the function name from qualified name
+        # For "src.app.math_utils.subtract", we want "subtract"
         parts = qualified_name.split(".")
-        module_relative_parts = parts[1:] if "." in qualified_name else parts
+        function_name = parts[-1]  # Last part is always the function name
 
-        def find_node(node: ast.AST, path: list[str]) -> ast.AST | None:
-            if not path:
-                return node
-            part = path[0]
-            remaining = path[1:]
-
+        def find_function(node: ast.AST, name: str) -> ast.AST | None:
+            """Recursively search for function with given name."""
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name == name:
+                    return node
+            
             for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if child.name == part:
-                        return find_node(child, remaining)
-                elif isinstance(child, ast.ClassDef):
-                    if child.name == part:
-                        return find_node(child, remaining)
+                result = find_function(child, name)
+                if result:
+                    return result
             return None
 
-        target_node = find_node(tree, module_relative_parts)
+        target_node = find_function(tree, function_name)
         if target_node and isinstance(
             target_node, (ast.FunctionDef, ast.AsyncFunctionDef)
         ):

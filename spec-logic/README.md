@@ -46,6 +46,32 @@ python -m function_spec_graph.cli ../input/sample_project \
   --use-ai-matching
 ```
 
+### Auto-generate tests voor untested functions (AI Spec Generator)
+
+Gebruik `--generate-missing-specs` om automatisch pytest tests te genereren voor alle functies zonder coverage:
+
+```bash
+# Preview wat er gegenereerd zou worden (dry-run)
+python -m function_spec_graph.cli ../input/sample_project \
+  --generate-missing-specs \
+  --dry-run
+
+# Genereer daadwerkelijk test files
+python -m function_spec_graph.cli ../input/sample_project \
+  --generate-missing-specs \
+  --output-json ./output/graph.json
+```
+
+Features:
+
+- ✅ Analyseert functie source code met AST
+- ✅ Gebruikt Claude om production-ready pytest tests te genereren
+- ✅ Respecteert project structure (src/app/math_utils.py → tests/test_math_utils.py)
+- ✅ Voegt toe aan bestaande test files of creëert nieuwe
+- ✅ Genereert docstrings, edge cases, en clear assertions
+
+**Vereisten**: `ANTHROPIC_API_KEY` environment variable moet gezet zijn.
+
 ## Matching Strategies
 
 - **Direct call** (confidence: high): Heuristic finds explicit function calls

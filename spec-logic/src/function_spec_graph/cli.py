@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .parser.graph_parser import build_graph, write_graph_json, write_graph_mermaid, write_graph_html
+from .parser.ai_spec_generator import generate_specs_for_untested
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use Claude AI to enhance test-function matching (requires ANTHROPIC_API_KEY).",
     )
+    parser.add_argument(
+        "--generate-missing-specs",
+        action="store_true",
+        help="Auto-generate pytest tests for untested functions using Claude AI (requires ANTHROPIC_API_KEY).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="When used with --generate-missing-specs, shows what would be generated without writing files.",
+    )
     return parser
 
 
@@ -69,6 +80,33 @@ def main() -> None:
     print(f"JSON: {args.output_json}")
     print(f"Mermaid: {args.output_mermaid}")
     print(f"HTML Report: {args.output_html}")
+    
+    # Generate missing specs if requested
+    if args.generate_missing_specs:
+        print("\n" + "="*60)
+        print("AI SPEC GENERATION")
+        print("="*60 + "\n")
+        
+        results = generate_specs_for_untested(
+            graph,
+            project_path,
+            dry_run=args.dry_run
+        )
+        
+        print("\n" + "-"*60)
+        print(f"[OK] Generated {results['generated_count']} test functions")
+        if results['failed_count'] > 0:
+            print(f"[ERROR] Failed {results['failed_count']} generations")
+        if results['generated_files']:
+            print(f"\nGenerated files:")
+            for file in results['generated_files']:
+                print(f"  - {file}")
+        if results['errors']:
+            print(f"\nErrors:")
+            for error in results['errors']:
+                print(f"  - {error}")
+        print("-"*60)
+
 
 
 if __name__ == "__main__":
