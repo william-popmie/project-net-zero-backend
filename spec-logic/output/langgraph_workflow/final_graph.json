@@ -1,0 +1,144 @@
+{
+  "metadata": {
+    "project_root": "C:/Users/tijng/github/project-net-zero-backend/input/sample_project",
+    "source_function_count": 4,
+    "spec_function_count": 2,
+    "edge_count": 2
+  },
+  "nodes": [
+    {
+      "id": "src.app.math_utils.add",
+      "kind": "project_function",
+      "name": "add",
+      "qualified_name": "src.app.math_utils.add",
+      "file_path": "src/app/math_utils.py",
+      "line": 1
+    },
+    {
+      "id": "src.app.math_utils.multiply",
+      "kind": "project_function",
+      "name": "multiply",
+      "qualified_name": "src.app.math_utils.multiply",
+      "file_path": "src/app/math_utils.py",
+      "line": 5
+    },
+    {
+      "id": "src.app.math_utils.subtract",
+      "kind": "project_function",
+      "name": "subtract",
+      "qualified_name": "src.app.math_utils.subtract",
+      "file_path": "src/app/math_utils.py",
+      "line": 9
+    },
+    {
+      "id": "src.app.math_utils.divide",
+      "kind": "project_function",
+      "name": "divide",
+      "qualified_name": "src.app.math_utils.divide",
+      "file_path": "src/app/math_utils.py",
+      "line": 14
+    },
+    {
+      "id": "tests.test_math_utils.test_add_returns_sum",
+      "kind": "spec_function",
+      "name": "test_add_returns_sum",
+      "qualified_name": "tests.test_math_utils.test_add_returns_sum",
+      "file_path": "tests/test_math_utils.py",
+      "line": 4
+    },
+    {
+      "id": "tests.test_math_utils.test_multiply_returns_product",
+      "kind": "spec_function",
+      "name": "test_multiply_returns_product",
+      "qualified_name": "tests.test_math_utils.test_multiply_returns_product",
+      "file_path": "tests/test_math_utils.py",
+      "line": 8
+    }
+  ],
+  "edges": [
+    {
+      "source": "src.app.math_utils.add",
+      "target": "tests.test_math_utils.test_add_returns_sum",
+      "relation": "validated_by",
+      "confidence": "direct_call"
+    },
+    {
+      "source": "src.app.math_utils.multiply",
+      "target": "tests.test_math_utils.test_multiply_returns_product",
+      "relation": "validated_by",
+      "confidence": "direct_call"
+    }
+  ],
+  "coverage": {
+    "total_functions": 4,
+    "tested_functions": 2,
+    "untested_functions": 2,
+    "coverage_percentage": 50.0,
+    "function_coverage": [
+      {
+        "function_id": "src.app.math_utils.add",
+        "name": "add",
+        "qualified_name": "src.app.math_utils.add",
+        "file_path": "src/app/math_utils.py",
+        "line": 1,
+        "specs": [
+          {
+            "spec_id": "tests.test_math_utils.test_add_returns_sum",
+            "confidence": "direct_call",
+            "relation": "validated_by"
+          }
+        ],
+        "is_tested": true
+      },
+      {
+        "function_id": "src.app.math_utils.multiply",
+        "name": "multiply",
+        "qualified_name": "src.app.math_utils.multiply",
+        "file_path": "src/app/math_utils.py",
+        "line": 5,
+        "specs": [
+          {
+            "spec_id": "tests.test_math_utils.test_multiply_returns_product",
+            "confidence": "direct_call",
+            "relation": "validated_by"
+          }
+        ],
+        "is_tested": true
+      },
+      {
+        "function_id": "src.app.math_utils.subtract",
+        "name": "subtract",
+        "qualified_name": "src.app.math_utils.subtract",
+        "file_path": "src/app/math_utils.py",
+        "line": 9,
+        "specs": [],
+        "is_tested": false
+      },
+      {
+        "function_id": "src.app.math_utils.divide",
+        "name": "divide",
+        "qualified_name": "src.app.math_utils.divide",
+        "file_path": "src/app/math_utils.py",
+        "line": 14,
+        "specs": [],
+        "is_tested": false
+      }
+    ],
+    "untested_list": [
+      {
+        "function_id": "src.app.math_utils.subtract",
+        "name": "subtract",
+        "qualified_name": "src.app.math_utils.subtract",
+        "file_path": "src/app/math_utils.py",
+        "line": 9
+      },
+      {
+        "function_id": "src.app.math_utils.divide",
+        "name": "divide",
+        "qualified_name": "src.app.math_utils.divide",
+        "file_path": "src/app/math_utils.py",
+        "line": 14
+      }
+    ]
+  }
+}

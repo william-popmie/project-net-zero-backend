@@ -1,4 +1,4 @@
-from app.math_utils import add, multiply
+from src.app.math_utils import add, multiply
 
 
 def test_add_returns_sum() -> None:

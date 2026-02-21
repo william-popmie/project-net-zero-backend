@@ -46,7 +46,7 @@ def parse_ast_node(state: WorkflowState) -> WorkflowState:
     """
     Node 1: Parse Python project into AST and build initial graph.
     """
-    from .graph_parser import build_graph
+    from .parser.graph_parser import build_graph
     
     print("\n" + "="*60)
     print("STEP 1: AST PARSING")
@@ -208,7 +208,7 @@ def generate_specs_node(state: WorkflowState) -> WorkflowState:
     """
     Node 4: Generate additional spec files using AI for untested/undercovered functions.
     """
-    from .ai_spec_generator import generate_specs_for_untested
+    from .parser.ai_spec_generator import generate_specs_for_untested
     
     print("\n" + "="*60)
     print(f"STEP 4: AI SPEC GENERATION (Iteration {state['spec_generation_iteration'] + 1})")
@@ -230,7 +230,7 @@ def generate_specs_node(state: WorkflowState) -> WorkflowState:
         
         # Re-parse the project to include new specs
         print("\n[*] Re-parsing project with new specs...")
-        from .graph_parser import build_graph
+        from .parser.graph_parser import build_graph
         
         state["graph"] = build_graph(
             state["project_root"],
@@ -252,7 +252,7 @@ def generate_output_node(state: WorkflowState) -> WorkflowState:
     """
     Node 5: Generate final output with AST tree structure.
     """
-    from .graph_parser import write_graph_json, write_graph_mermaid, write_graph_html
+    from .parser.graph_parser import write_graph_json, write_graph_mermaid, write_graph_html
     
     print("\n" + "="*60)
     print("STEP 5: FINAL OUTPUT GENERATION")
