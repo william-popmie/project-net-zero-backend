@@ -21,3 +21,8 @@ venv/
 
 # Demo input data
 input-folder/
+
+# Output
+output-folder/
+
+.env
