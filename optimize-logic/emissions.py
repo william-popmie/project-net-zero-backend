@@ -12,7 +12,7 @@ from codecarbon import EmissionsTracker
 
 {function_source}
 
-tracker = EmissionsTracker(save_to_file=False, measure_power_secs=1, log_level="ERROR")
+tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR")
 tracker.start()
 for _ in range({iterations}):
     {benchmark_call}
@@ -42,6 +42,8 @@ def measure_emissions_for_source(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(script)
         tmp_path = f.name
+
+    os.makedirs(os.path.join(PROJECT_ROOT, "output-folder", "codecarbon_output"), exist_ok=True)
 
     try:
         result = subprocess.run(

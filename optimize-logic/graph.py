@@ -108,6 +108,8 @@ def run_tests(state: OptimizerState) -> OptimizerState:
         passed = result.returncode == 0
         output = result.stdout + result.stderr
         print(f"[run_tests] {'PASS' if passed else 'FAIL'}")
+        if not passed:
+            print(output)
         return {**state, "test_passed": passed, "last_test_output": output}
     finally:
         os.unlink(tmp_path)
