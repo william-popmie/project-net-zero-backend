@@ -26,6 +26,22 @@ coverage.json
 output/
 input/
 
+# Input/output repos (keep folders via .gitkeep, ignore contents)
+input-repo/*
+!input-repo/.gitkeep
+output-repo/*
+!output-repo/.gitkeep
+
+# Generated output files in src (keep folders via .gitkeep)
+# Un-ignore the output dirs first (matched by the generic "output/" rule above),
+# then ignore their contents but keep .gitkeep
+!src/optimizer_logic/output/
+src/optimizer_logic/output/*
+!src/optimizer_logic/output/.gitkeep
+!src/spec_logic/output/
+src/spec_logic/output/*
+!src/spec_logic/output/.gitkeep
+
 # Generated files
 *.mmd
 *.json
