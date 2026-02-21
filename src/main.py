@@ -2,12 +2,14 @@
 Orchestrator — run from anywhere:
 
     python src/main.py
+    python src/main.py --model crusoe
 
-Edit the CONFIG block below to change behaviour.
+Edit the CONFIG block below to change other behaviour.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import datetime
@@ -62,6 +64,16 @@ from convertor.json_to_python import write_python_files         # noqa: E402
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Project Net Zero optimiser")
+    parser.add_argument(
+        "--model",
+        choices=["claude", "crusoe"],
+        default=CONFIG["engine"],
+        help="Inference engine to use (default: %(default)s)",
+    )
+    args = parser.parse_args()
+    CONFIG["engine"] = args.model
+
     project_path = Path(CONFIG["project_path"]).resolve()
     if not project_path.exists() or not project_path.is_dir():
         print(f"[ERROR] project_path does not exist: {project_path}")
