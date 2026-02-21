@@ -1,8 +1,8 @@
-from function_spec import FunctionSpec
-from graph import build_graph
+from .function_spec import FunctionSpec
+from .graph import build_graph
 
 
-def optimize_function(spec: FunctionSpec) -> str:
+def optimize_function(spec: FunctionSpec) -> dict:
     graph = build_graph()
     initial_state = {
         "spec": spec,
@@ -17,7 +17,12 @@ def optimize_function(spec: FunctionSpec) -> str:
         "success": False,
     }
     final_state = graph.invoke(initial_state)
-    return final_state["current_source"]
+    return {
+        "optimized_source": final_state["current_source"],
+        "baseline_emissions": final_state["baseline_emissions"],
+        "optimized_emissions": final_state["current_emissions"],
+        "success": final_state["success"],
+    }
 
 
 if __name__ == "__main__":

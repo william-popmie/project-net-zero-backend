@@ -1,0 +1,42 @@
+{
+  "project_root": "/Users/williamragnarsson/Documents/Programming/HackEurope/test/project-net-zero-backend/input-repo",
+  "generated_at": "2026-02-21T20:37:39.350155",
+  "functions": [
+    {
+      "id": "src.app.math_utils.add",
+      "name": "add",
+      "file": "src/app/math_utils.py",
+      "optimized_source": "def add(a: int, b: int) -> int:\n    return a + b",
+      "baseline_emissions": 1.4915916453937825e-10,
+      "optimized_emissions": 1.2339418730080068e-10,
+      "success": true
+    },
+    {
+      "id": "src.app.math_utils.multiply",
+      "name": "multiply",
+      "file": "src/app/math_utils.py",
+      "optimized_source": "def multiply(a: int, b: int) -> int:\n    return a * b",
+      "baseline_emissions": 1.8423881478302065e-10,
+      "optimized_emissions": 1.0850592484566732e-10,
+      "success": true
+    },
+    {
+      "id": "src.app.math_utils.subtract",
+      "name": "subtract",
+      "file": "src/app/math_utils.py",
+      "optimized_source": "def subtract(a: int, b: int) -> int:\n    \"\"\"Subtract b from a.\"\"\"\n    return a - b",
+      "baseline_emissions": 1.0565656226608553e-10,
+      "optimized_emissions": 8.780654742913613e-11,
+      "success": true
+    },
+    {
+      "id": "src.app.math_utils.divide",
+      "name": "divide",
+      "file": "src/app/math_utils.py",
+      "optimized_source": "def divide(a: float, b: float) -> float:\n    if b == 0:\n        raise ValueError('Cannot divide by zero')\n    return a / b",
+      "baseline_emissions": 1.2022830301248178e-10,
+      "optimized_emissions": 1.6458726658493106e-10,
+      "success": false
+    }
+  ]
+}

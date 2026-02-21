@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 from langgraph.graph import StateGraph, END
 
-from function_spec import FunctionSpec
-from emissions import measure_emissions_for_source
+from .function_spec import FunctionSpec
+from .emissions import measure_emissions_for_source
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class OptimizerState(TypedDict):
@@ -90,10 +90,13 @@ def optimize(state: OptimizerState) -> OptimizerState:
 def run_tests(state: OptimizerState) -> OptimizerState:
     print("[run_tests] running pytest...")
     spec = state["spec"]
-    combined = state["current_source"] + "\n\n" + spec.test_source
+    # Strip `self` from test function signatures — test_source may contain
+    # class methods extracted without the class wrapper.
+    clean_test = re.sub(r"def (test_\w+)\(self(?:,\s*)?", r"def \1(", spec.test_source)
+    combined = "import pytest\n\n" + state["current_source"] + "\n\n" + clean_test
 
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir=PROJECT_ROOT
+        mode="w", suffix=".py", delete=False, dir=tempfile.gettempdir()
     ) as f:
         f.write(combined)
         tmp_path = f.name
@@ -125,7 +128,7 @@ def measure_emissions(state: OptimizerState) -> OptimizerState:
 
 def save_output(state: OptimizerState) -> OptimizerState:
     spec = state["spec"]
-    output_dir = os.path.join(PROJECT_ROOT, "output-folder")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"{spec.function_name}_optimized.py")
 

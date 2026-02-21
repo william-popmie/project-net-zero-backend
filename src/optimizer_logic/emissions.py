@@ -1,18 +1,21 @@
+import ast
 import subprocess
 import sys
 import tempfile
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BENCHMARK_TEMPLATE = """\
 import sys
+import os
 sys.path.insert(0, {optimize_logic_path!r})
 from codecarbon import EmissionsTracker
 
 {function_source}
 
-tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR")
+os.makedirs({codecarbon_output_dir!r}, exist_ok=True)
+tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR", output_dir={codecarbon_output_dir!r})
 tracker.start()
 for _ in range({iterations}):
     {benchmark_call}
@@ -28,22 +31,34 @@ def measure_emissions_for_source(
     iterations: int = 10_000,
 ) -> float:
     if benchmark_call is None:
-        benchmark_call = f"{function_name}(97)"
+        try:
+            tree = ast.parse(function_source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == function_name:
+                    num_args = len(node.args.args)
+                    args = ", ".join(["97"] * num_args)
+                    benchmark_call = f"{function_name}({args})"
+                    break
+        except Exception:
+            pass
+        if benchmark_call is None:
+            benchmark_call = f"{function_name}(97)"
 
-    optimize_logic_path = os.path.join(PROJECT_ROOT, "optimize-logic")
+    optimize_logic_path = os.path.join(PROJECT_ROOT, "src", "optimizer_logic")
+    codecarbon_output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "codecarbon_output")
+    os.makedirs(codecarbon_output_dir, exist_ok=True)
 
     script = BENCHMARK_TEMPLATE.format(
         optimize_logic_path=optimize_logic_path,
         function_source=function_source,
         iterations=iterations,
         benchmark_call=benchmark_call,
+        codecarbon_output_dir=codecarbon_output_dir,
     )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(script)
         tmp_path = f.name
-
-    os.makedirs(os.path.join(PROJECT_ROOT, "output-folder", "codecarbon_output"), exist_ok=True)
 
     try:
         result = subprocess.run(

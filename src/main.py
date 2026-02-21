@@ -8,7 +8,9 @@ Edit the CONFIG block below to change behaviour.
 
 from __future__ import annotations
 
+import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -21,8 +23,11 @@ CONFIG = {
     # Path to the Python project to analyse.
     "project_path": SRC_DIR / "../input-repo",
 
-    # Where the output JSON is written.
+    # Where the spec-logic output JSON is written.
     "output": SRC_DIR / "spec_logic/output/results.json",
+
+    # Where the optimizer output JSON is written.
+    "optimizer_output": SRC_DIR / "optimizer_logic/output/results.json",
 
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
@@ -41,7 +46,9 @@ from dotenv import load_dotenv                          # noqa: E402
 load_dotenv(SRC_DIR / "../.env")                        # repo-root .env
 load_dotenv(SRC_DIR / ".env")                           # src/.env (optional override)
 
-from spec_logic.langgraph_workflow import run_workflow   # noqa: E402
+from spec_logic.langgraph_workflow import run_workflow           # noqa: E402
+from optimizer_logic.optimizer import optimize_function         # noqa: E402
+from optimizer_logic.function_spec import FunctionSpec          # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Run
@@ -70,3 +77,35 @@ if __name__ == "__main__":
             for err in f.get("errors", []):
                 print(f"      {err}")
         sys.exit(1)
+
+    # ── Phase 2: Optimize ────────────────────────────────────────────────────
+    optimizer_results = []
+    for func_result in output.get("functions", []):
+        if func_result["status"] not in ("passed_existing", "generated"):
+            continue
+        if not func_result["function_code"] or not func_result["test_code"]:
+            continue
+
+        spec = FunctionSpec(
+            function_name=func_result["name"],
+            module_path=func_result["file"],
+            function_source=func_result["function_code"],
+            test_source=func_result["test_code"],
+        )
+        result = optimize_function(spec)
+        optimizer_results.append({
+            "id": func_result["id"],
+            "name": func_result["name"],
+            "file": func_result["file"],
+            **result,
+        })
+
+    optimizer_output_path = Path(CONFIG["optimizer_output"])
+    optimizer_output_path.parent.mkdir(parents=True, exist_ok=True)
+    optimizer_output_path.write_text(
+        json.dumps({
+            "project_root": str(project_path),
+            "generated_at": datetime.now().isoformat(),
+            "functions": optimizer_results,
+        }, indent=2)
+    )
