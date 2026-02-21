@@ -1,28 +1,33 @@
-# Python
+# Python bytecode
 __pycache__/
 *.py[cod]
-*.pyo
-.pytest_cache/
+*$py.class
 
 # Virtual environment
-venv/
 .venv/
+venv/
+env/
 
-# Environment variables
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment files
 .env
 .env.*
+!.env.example
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
-
-# OS
 .DS_Store
-
-# Demo input data
-input-folder/
-
-# Output
-output-folder/
-
-.env
+Thumbs.db
