@@ -35,8 +35,11 @@ CONFIG = {
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
 
-    # How many times Claude may attempt to improve tests for a single function.
+    # How many times the model may attempt to improve tests for a single function.
     "max_iterations": 3,
+
+    # Inference engine: "claude" or "crusoe"
+    "engine": "claude",
 }
 
 # ---------------------------------------------------------------------------
@@ -69,6 +72,7 @@ if __name__ == "__main__":
         output_path=Path(CONFIG["output"]),
         coverage_threshold=float(CONFIG["coverage_threshold"]),
         max_iterations=int(CONFIG["max_iterations"]),
+        engine=CONFIG["engine"],
     )
 
     functions = output.get("functions", [])
@@ -96,7 +100,7 @@ if __name__ == "__main__":
             function_source=func_result["function_code"],
             test_source=func_result["test_code"],
         )
-        result = optimize_function(spec)
+        result = optimize_function(spec, engine=CONFIG["engine"])
         optimizer_results.append({
             "id": func_result["id"],
             "name": func_result["name"],

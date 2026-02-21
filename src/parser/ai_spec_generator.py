@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import ast
-import os
 from pathlib import Path
 
-import anthropic
-
-MODEL = "claude-opus-4-5"
+from optimizer_logic import llm_client
 
 
 def determine_test_file_path(project_root: Path, source_file_path: str) -> Path:
@@ -38,31 +35,24 @@ def generate_tests(
     function_code: str,
     source_file: str,
     project_root: Path,
+    engine: str = "claude",
 ) -> str:
     """
-    Use Claude to generate pytest code for a function.
+    Generate pytest code for a function using the requested engine.
 
     Args:
         function_id: Dotted qualified name, e.g. "src.app.math_utils.add"
         function_code: The actual function source code
         source_file: Relative path, e.g. "src/app/math_utils.py"
         project_root: Root of the project (for context)
+        engine: "claude" or "crusoe"
 
     Returns:
         Generated pytest code as a string (valid Python).
 
     Raises:
-        ValueError: If API key is missing, generation fails, or code is not valid Python.
+        ValueError: If generation fails or code is not valid Python.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "ANTHROPIC_API_KEY environment variable not set. "
-            "Cannot generate tests without API access."
-        )
-
-    client = anthropic.Anthropic(api_key=api_key)
-
     prompt = f"""Generate a complete, production-ready pytest test for this Python function.
 
 Function: {function_id}
@@ -83,13 +73,7 @@ Requirements:
 Respond with ONLY the Python test code (no markdown, no explanations).
 Include all necessary imports at the top."""
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    test_code = response.content[0].text.strip()
+    test_code = llm_client.generate_spec(prompt=prompt, engine=engine).strip()
 
     # Remove markdown code fences if present
     if test_code.startswith("```"):
@@ -107,7 +91,7 @@ Include all necessary imports at the top."""
         test_code = "\n".join(lines[start_idx:end_idx]).strip()
 
     if not test_code:
-        raise ValueError("Claude returned empty test code")
+        raise ValueError("Model returned empty test code")
 
     # Validate that the returned code is syntactically valid Python
     try:
