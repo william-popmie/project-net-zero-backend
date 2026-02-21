@@ -11,7 +11,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, END
 
-from .parser.graph_parser import (
+from parser.graph_parser import (
     FunctionCollector,
     FunctionInfo,
     collect_function_call_map,
@@ -22,7 +22,7 @@ from .parser.graph_parser import (
     parse_python_file,
     path_to_module_path,
 )
-from .parser.ai_spec_generator import determine_test_file_path, generate_tests
+from parser.ai_spec_generator import determine_test_file_path, generate_tests
 
 
 class FunctionState(TypedDict):
@@ -31,13 +31,14 @@ class FunctionState(TypedDict):
     coverage_threshold: float
     max_iterations: int
 
-    existing_test_code: str       # test code found or generated
-    test_file_path: Path | None   # where tests live / will be written
-    coverage_score: float         # 0–100
+    existing_test_code: str         # test code found or generated
+    matched_test_names: list[str]   # names found by lookup (for before/after display)
+    test_file_path: Path | None     # where tests live / will be written
+    coverage_score: float           # 0–100
     iteration: int
 
-    final_test_code: str          # populated when workflow reaches a terminal state
-    status: str                   # "passed_existing" | "generated" | "failed" | "in_progress"
+    final_test_code: str            # populated when workflow reaches a terminal state
+    status: str                     # "passed_existing" | "generated" | "failed" | "in_progress"
     errors: list[str]
 
 
@@ -55,6 +56,27 @@ def _detect_python_executable(project_root: Path) -> str:
     return sys.executable
 
 
+def _extract_top_level_test_names(code: str) -> list[str]:
+    """Return top-level test function and class names from a code string."""
+    try:
+        tree = ast.parse(code)
+        names = []
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name.lower().startswith("test"):
+                    names.append(node.name)
+            elif isinstance(node, ast.ClassDef):
+                if node.name.lower().startswith("test"):
+                    names.append(node.name)
+        return names
+    except SyntaxError:
+        return []
+
+
+def _divider() -> None:
+    print("  " + "─" * 54)
+
+
 # ---------------------------------------------------------------------------
 # Node 1: lookup_tests_node
 # ---------------------------------------------------------------------------
@@ -66,11 +88,10 @@ def lookup_tests_node(state: FunctionState) -> FunctionState:
     func_name = function.name
 
     matching_test_code: list[str] = []
+    matched_names: list[str] = []
     test_file_path: Path | None = None
 
     for file_path in discover_python_files(project_root):
-        # Use relative path so parent directories outside the project don't
-        # accidentally trigger the test-file heuristic.
         if not is_test_file(file_path.relative_to(project_root)):
             continue
 
@@ -111,18 +132,13 @@ def lookup_tests_node(state: FunctionState) -> FunctionState:
                 test_code = extract_function_source(file_path, test_func.qualified_name)
                 if test_code:
                     matching_test_code.append(test_code)
+                    matched_names.append(test_func.name)
                     if test_file_path is None:
                         test_file_path = file_path
 
     state["existing_test_code"] = "\n\n".join(matching_test_code)
+    state["matched_test_names"] = matched_names
     state["test_file_path"] = test_file_path
-
-    if matching_test_code:
-        rel = test_file_path.relative_to(project_root) if test_file_path else "?"
-        print(f"  [lookup] found {len(matching_test_code)} existing test(s) in {rel}")
-    else:
-        print(f"  [lookup] no existing tests found")
-
     return state
 
 
@@ -133,7 +149,6 @@ def lookup_tests_node(state: FunctionState) -> FunctionState:
 def evaluate_tests_node(state: FunctionState) -> FunctionState:
     """Run existing/generated tests and measure per-function line coverage."""
     if not state["existing_test_code"]:
-        # Nothing to evaluate yet — routing will send us to create
         return state
 
     project_root = state["project_root"]
@@ -145,8 +160,6 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
         return state
 
     python_exe = _detect_python_executable(project_root)
-
-    # Top-level source package from the function's file path (e.g. "src")
     func_file = Path(function.file_path)
     cov_module = func_file.parts[0] if func_file.parts else "src"
 
@@ -166,11 +179,12 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
             timeout=120,
         )
         if result.returncode != 0:
-            print(f"  [evaluate] pytest exit {result.returncode}")
-            if result.stdout.strip():
-                print("  " + result.stdout.strip().splitlines()[-1])
-            if result.stderr.strip():
-                print("  " + result.stderr.strip().splitlines()[-1])
+            last_stdout = result.stdout.strip().splitlines()
+            last_stderr = result.stderr.strip().splitlines()
+            if last_stdout:
+                print(f"  [evaluate] pytest: {last_stdout[-1]}")
+            if last_stderr:
+                print(f"  [evaluate] stderr: {last_stderr[-1]}")
 
         coverage_file = project_root / "coverage.json"
         coverage_score = 0.0
@@ -179,7 +193,6 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
             coverage_data = json.loads(coverage_file.read_text(encoding="utf-8"))
             files = coverage_data.get("files", {})
 
-            # Match the coverage entry to this function's file
             func_file_posix = function.file_path
             file_cov = files.get(func_file_posix)
             if file_cov is None:
@@ -191,20 +204,16 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
             if file_cov is not None:
                 executed_lines = set(file_cov.get("executed_lines", []))
                 missing_lines = set(file_cov.get("missing_lines", []))
-                # Only count lines that coverage.py considers executable
-                # (executed + missing). This excludes blank lines, comments,
-                # and docstrings that sit inside the function range.
                 all_executable = executed_lines | missing_lines
                 func_range = set(range(function.line, function.end_line + 1))
                 func_executable = func_range & all_executable
                 if func_executable:
                     coverage_score = len(func_executable & executed_lines) / len(func_executable) * 100
                 else:
-                    coverage_score = 100.0  # no executable lines — trivially covered
+                    coverage_score = 100.0
 
         state["coverage_score"] = coverage_score
 
-        # Set terminal status when coverage is sufficient
         if coverage_score >= state["coverage_threshold"]:
             state["status"] = "passed_existing" if state["iteration"] == 0 else "generated"
             if test_file_path.exists():
@@ -217,7 +226,6 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
         state["errors"].append(f"Test execution error for {function.id}: {e}")
         state["coverage_score"] = 0.0
 
-    # Mark as failed when we've run out of iterations
     if (
         state["coverage_score"] < state["coverage_threshold"]
         and state["iteration"] >= state["max_iterations"]
@@ -235,7 +243,6 @@ def evaluate_tests_node(state: FunctionState) -> FunctionState:
 
 def _route_after_evaluate(state: FunctionState) -> str:
     if not state["existing_test_code"]:
-        # No tests yet
         if state["iteration"] >= state["max_iterations"]:
             return END
         return "create"
@@ -258,6 +265,8 @@ def create_tests_node(state: FunctionState) -> FunctionState:
     project_root = state["project_root"]
     function = state["function"]
 
+    print(f"  [generate] asking Claude (iteration {state['iteration'] + 1})...")
+
     try:
         new_test_code = generate_tests(
             function_id=function.id,
@@ -266,15 +275,12 @@ def create_tests_node(state: FunctionState) -> FunctionState:
             project_root=project_root,
         )
 
-        # Resolve test file path
         test_file_path = state["test_file_path"]
         if test_file_path is None:
             test_file_path = determine_test_file_path(project_root, function.file_path)
 
         if test_file_path.exists():
             existing_content = test_file_path.read_text(encoding="utf-8")
-
-            # Avoid adding functions/classes that already exist
             try:
                 existing_tree = ast.parse(existing_content)
                 existing_names = {
@@ -288,29 +294,32 @@ def create_tests_node(state: FunctionState) -> FunctionState:
                     for node in ast.walk(new_tree)
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                 }
-                if new_names - existing_names:
+                added = new_names - existing_names
+                if added:
                     final_content = existing_content.rstrip() + "\n\n" + new_test_code + "\n"
+                    print(f"  [generate] added {len(added)} new test(s) to {test_file_path.relative_to(project_root)}")
                 else:
                     final_content = existing_content
+                    print(f"  [generate] no new test names — keeping existing file")
             except SyntaxError:
                 final_content = existing_content.rstrip() + "\n\n" + new_test_code + "\n"
         else:
             test_file_path.parent.mkdir(parents=True, exist_ok=True)
-            # Create __init__.py so pytest can import from subdirectories
             init_py = test_file_path.parent / "__init__.py"
             if not init_py.exists():
                 init_py.write_text("", encoding="utf-8")
             final_content = new_test_code
+            new_names = _extract_top_level_test_names(new_test_code)
+            print(f"  [generate] wrote {len(new_names)} test(s) → {test_file_path.relative_to(project_root)}")
 
         test_file_path.write_text(final_content, encoding="utf-8")
-
         state["existing_test_code"] = new_test_code
         state["test_file_path"] = test_file_path
 
     except Exception as e:
         state["errors"].append(f"Test generation error for {function.id}: {e}")
+        print(f"  [generate] failed: {e}")
 
-    # Always increment iteration to prevent infinite loops
     state["iteration"] = state["iteration"] + 1
     return state
 
@@ -353,23 +362,12 @@ def run_workflow(
     coverage_threshold: float = 80.0,
     max_iterations: int = 3,
 ) -> dict[str, Any]:
-    """
-    Run the per-function LangGraph workflow over an entire project.
-
-    For each source function:
-      1. lookup_node  – find existing tests
-      2. evaluate_node – run pytest with per-function line coverage
-      3. create_node  – ask Claude to generate tests (loops back to evaluate)
-
-    Writes results to output_path as JSON and returns the output dict.
-    """
     root = project_root.resolve()
 
     print(f"\nScanning project: {root}")
     functions = collect_functions(root)
-    print(f"Found {len(functions)} source functions")
+    print(f"Found {len(functions)} source functions\n")
 
-    # Populate source_code for every function up front
     for func in functions:
         func.source_code = extract_function_source(root / func.file_path, func.qualified_name)
 
@@ -377,23 +375,20 @@ def run_workflow(
     results: list[dict[str, Any]] = []
 
     for i, func in enumerate(functions, 1):
-        print(f"\n[{i}/{len(functions)}] Processing: {func.id}")
+        # ── header ─────────────────────────────────────────────────────────
+        print(f"{'─'*58}")
+        sig = func.source_code.splitlines()[0] if func.source_code else func.name
+        print(f"[{i}/{len(functions)}]  {func.name}  ·  {func.file_path}  lines {func.line}–{func.end_line}")
+        print(f"         {sig}")
 
         if not func.source_code:
-            print("  [!] Could not extract source, skipping")
-            results.append(
-                {
-                    "id": func.id,
-                    "name": func.name,
-                    "file": func.file_path,
-                    "function_code": "",
-                    "test_code": "",
-                    "test_file": None,
-                    "coverage_score": 0.0,
-                    "status": "failed",
-                    "errors": ["Could not extract source code"],
-                }
-            )
+            print("  BEFORE  (could not extract source — skipped)")
+            results.append({
+                "id": func.id, "name": func.name, "file": func.file_path,
+                "function_code": "", "test_code": "", "test_file": None,
+                "coverage_score": 0.0, "status": "failed",
+                "errors": ["Could not extract source code"],
+            })
             continue
 
         initial_state: FunctionState = {
@@ -402,6 +397,7 @@ def run_workflow(
             "coverage_threshold": coverage_threshold,
             "max_iterations": max_iterations,
             "existing_test_code": "",
+            "matched_test_names": [],
             "test_file_path": None,
             "coverage_score": 0.0,
             "iteration": 0,
@@ -413,55 +409,91 @@ def run_workflow(
         try:
             final_state = graph.invoke(initial_state)
         except Exception as e:
-            print(f"  [ERROR] Workflow failed: {e}")
-            results.append(
-                {
-                    "id": func.id,
-                    "name": func.name,
-                    "file": func.file_path,
-                    "function_code": func.source_code,
-                    "test_code": "",
-                    "test_file": None,
-                    "coverage_score": 0.0,
-                    "status": "failed",
-                    "errors": [str(e)],
-                }
-            )
+            print(f"  [ERROR] Workflow crashed: {e}")
+            results.append({
+                "id": func.id, "name": func.name, "file": func.file_path,
+                "function_code": func.source_code, "test_code": "", "test_file": None,
+                "coverage_score": 0.0, "status": "failed", "errors": [str(e)],
+            })
             continue
 
+        # ── BEFORE ─────────────────────────────────────────────────────────
+        # Deduplicate while preserving order
+        before_names_raw = final_state.get("matched_test_names", [])
+        seen: set[str] = set()
+        before_names: list[str] = []
+        for n in before_names_raw:
+            if n not in seen:
+                before_names.append(n)
+                seen.add(n)
+
+        before_file = final_state.get("test_file_path")
+        if before_names:
+            rel = before_file.relative_to(root) if before_file else "?"
+            print(f"\n  BEFORE  {rel}")
+            for n in before_names:
+                print(f"    · {n}")
+        else:
+            print(f"\n  BEFORE  (no existing tests)")
+
+        # ── AFTER ──────────────────────────────────────────────────────────
         test_file = final_state.get("test_file_path")
         status = final_state.get("status", "failed")
-
-        # Finalize status if still in_progress (e.g. max_iterations == 0)
-        if status == "in_progress":
-            score = final_state.get("coverage_score", 0.0)
-            iters = final_state.get("iteration", 0)
-            if score >= coverage_threshold:
-                status = "passed_existing" if iters == 0 else "generated"
-            else:
-                status = "failed"
-
         score = final_state.get("coverage_score", 0.0)
-        print(f"  Status: {status}, Coverage: {score:.1f}%")
+        iters = final_state.get("iteration", 0)
 
-        # Prefer final_test_code (full file); fall back to existing_test_code (matched functions)
-        test_code_out = final_state.get("final_test_code") or final_state.get(
-            "existing_test_code", ""
-        )
+        if status == "in_progress":
+            status = ("passed_existing" if iters == 0 else "generated") if score >= coverage_threshold else "failed"
 
-        results.append(
-            {
-                "id": func.id,
-                "name": func.name,
-                "file": func.file_path,
-                "function_code": func.source_code,
-                "test_code": test_code_out,
-                "test_file": str(test_file) if test_file else None,
-                "coverage_score": score,
-                "status": status,
-                "errors": final_state.get("errors", []),
-            }
-        )
+        icon = "✓" if status in ("passed_existing", "generated") else "✗"
+        iter_note = f"  ({iters} iteration{'s' if iters != 1 else ''})" if iters > 0 else ""
+
+        print(f"\n  AFTER   {icon} {status}  {score:.0f}% coverage{iter_note}")
+
+        # Show test names from the matched/generated code for THIS function only
+        # (existing_test_code = concatenated matched funcs or last generated code)
+        relevant_code = final_state.get("existing_test_code", "")
+        after_names_raw = _extract_top_level_test_names(relevant_code)
+        # Deduplicate while preserving order
+        seen_after: set[str] = set()
+        after_names: list[str] = []
+        for n in after_names_raw:
+            if n not in seen_after:
+                after_names.append(n)
+                seen_after.add(n)
+
+        before_set = set(before_names)
+        for n in after_names:
+            tag = "+" if n not in before_set else " "
+            print(f"    {tag} {n}")
+
+        if final_state.get("errors"):
+            for err in final_state["errors"]:
+                print(f"    ! {err}")
+
+        print()
+
+        results.append({
+            "id": func.id,
+            "name": func.name,
+            "file": func.file_path,
+            "function_code": func.source_code,
+            "test_code": relevant_code,   # matched/generated tests for this function
+            "test_file": str(test_file) if test_file else None,
+            "coverage_score": score,
+            "status": status,
+            "errors": final_state.get("errors", []),
+        })
+
+    # ── final summary ───────────────────────────────────────────────────────
+    print(f"{'─'*58}")
+    passed = sum(1 for r in results if r["status"] in ("passed_existing", "generated"))
+    failed = [r for r in results if r["status"] == "failed"]
+    print(f"\nDone  {passed}/{len(results)} passed")
+    if failed:
+        print("Failed:")
+        for r in failed:
+            print(f"  ✗ {r['id']}")
 
     output: dict[str, Any] = {
         "project_root": str(root),
@@ -472,6 +504,6 @@ def run_workflow(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
-    print(f"\nResults written to: {output_path}")
+    print(f"\nOutput → {output_path}")
 
     return output

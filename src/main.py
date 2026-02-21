@@ -1,10 +1,9 @@
 """
-Entry point — run this script from anywhere:
+Orchestrator — run from anywhere:
 
-    python spec-logic/run.py
+    python src/main.py
 
 Edit the CONFIG block below to change behaviour.
-No installation or CLI flags needed.
 """
 
 from __future__ import annotations
@@ -16,14 +15,14 @@ from pathlib import Path
 # CONFIG — edit these values
 # ---------------------------------------------------------------------------
 
-SCRIPT_DIR = Path(__file__).parent
+SRC_DIR = Path(__file__).parent
 
 CONFIG = {
-    # Path to the Python project you want to analyse.
-    "project_path": SCRIPT_DIR / "../input/sample_project",
+    # Path to the Python project to analyse.
+    "project_path": SRC_DIR / "../input-repo",
 
-    # Where the output JSON is written (relative to this script).
-    "output": SCRIPT_DIR / "output/results.json",
+    # Where the output JSON is written.
+    "output": SRC_DIR / "spec_logic/output/results.json",
 
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
@@ -33,16 +32,16 @@ CONFIG = {
 }
 
 # ---------------------------------------------------------------------------
-# Bootstrap: make the package importable without pip install
+# Bootstrap: make src/ importable without pip install
 # ---------------------------------------------------------------------------
 
-sys.path.insert(0, str(SCRIPT_DIR / "src"))
+sys.path.insert(0, str(SRC_DIR))
 
-from dotenv import load_dotenv  # noqa: E402 — must come after sys.path tweak
-load_dotenv(SCRIPT_DIR / ".env")          # spec-logic/.env
-load_dotenv(SCRIPT_DIR / "../.env")       # repo-root .env (fallback)
+from dotenv import load_dotenv                          # noqa: E402
+load_dotenv(SRC_DIR / "../.env")                        # repo-root .env
+load_dotenv(SRC_DIR / ".env")                           # src/.env (optional override)
 
-from function_spec_graph.langgraph_workflow import run_workflow  # noqa: E402
+from spec_logic.langgraph_workflow import run_workflow   # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Run
@@ -63,11 +62,6 @@ if __name__ == "__main__":
 
     functions = output.get("functions", [])
     failed = [f for f in functions if f["status"] == "failed"]
-
-    print(f"\nSummary: {len(functions)} functions processed")
-    print(f"  passed_existing : {sum(1 for f in functions if f['status'] == 'passed_existing')}")
-    print(f"  generated       : {sum(1 for f in functions if f['status'] == 'generated')}")
-    print(f"  failed          : {len(failed)}")
 
     if failed:
         print("\nFailed functions:")
