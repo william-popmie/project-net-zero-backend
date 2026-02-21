@@ -71,7 +71,7 @@ Returns the optimized function source as a plain string. Also writes it to `outp
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Anthropic client reads `ANTHROPIC_API_KEY` from the environment. Either export it in your shell or place it in a `.env` file at the project root (loaded via `source .env` or a tool like `python-dotenv`).
+Place a `.env` file at the project root — it is loaded automatically via `python-dotenv` when the optimizer runs:
 
 ### `.codecarbon.config`
 

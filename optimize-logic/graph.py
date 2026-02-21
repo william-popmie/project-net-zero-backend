@@ -6,6 +6,9 @@ import re
 from typing import TypedDict
 
 import anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
 from langgraph.graph import StateGraph, END
 
 from function_spec import FunctionSpec
