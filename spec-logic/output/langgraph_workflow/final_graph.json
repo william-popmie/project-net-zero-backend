@@ -2,8 +2,8 @@
   "metadata": {
     "project_root": "C:/Users/tijng/github/project-net-zero-backend/input/sample_project",
     "source_function_count": 4,
-    "spec_function_count": 22,
-    "edge_count": 22
+    "spec_function_count": 20,
+    "edge_count": 20
   },
   "nodes": [
     {
@@ -95,36 +95,28 @@
       "line": 37
     },
     {
-      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative",
+      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_result_negative",
       "kind": "spec_function",
-      "name": "test_subtract_resulting_in_negative",
-      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative",
+      "name": "test_subtract_result_negative",
+      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_result_negative",
       "file_path": "tests/app/test_math_utils.py",
       "line": 43
     },
     {
-      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property",
+      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_same_numbers",
       "kind": "spec_function",
-      "name": "test_subtract_commutative_property",
-      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property",
+      "name": "test_subtract_same_numbers",
+      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_same_numbers",
       "file_path": "tests/app/test_math_utils.py",
       "line": 49
     },
     {
-      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_identity_property",
+      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_order_matters",
       "kind": "spec_function",
-      "name": "test_subtract_identity_property",
-      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_identity_property",
+      "name": "test_subtract_order_matters",
+      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_order_matters",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 54
-    },
-    {
-      "id": "tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property",
-      "kind": "spec_function",
-      "name": "test_subtract_inverse_property",
-      "qualified_name": "tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property",
-      "file_path": "tests/app/test_math_utils.py",
-      "line": 59
+      "line": 55
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_positive_numbers",
@@ -132,7 +124,7 @@
       "name": "test_divide_positive_numbers",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_positive_numbers",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 71
+      "line": 68
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_negative_numbers",
@@ -140,15 +132,7 @@
       "name": "test_divide_negative_numbers",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_negative_numbers",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 77
-    },
-    {
-      "id": "tests.app.test_math_utils.TestDivide.test_divide_with_floats",
-      "kind": "spec_function",
-      "name": "test_divide_with_floats",
-      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_with_floats",
-      "file_path": "tests/app/test_math_utils.py",
-      "line": 83
+      "line": 74
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_by_one",
@@ -156,23 +140,23 @@
       "name": "test_divide_by_one",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_by_one",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 89
+      "line": 80
     },
     {
-      "id": "tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator",
+      "id": "tests.app.test_math_utils.TestDivide.test_divide_zero_numerator",
       "kind": "spec_function",
-      "name": "test_divide_zero_as_numerator",
-      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator",
+      "name": "test_divide_zero_numerator",
+      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_zero_numerator",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 95
+      "line": 86
     },
     {
-      "id": "tests.app.test_math_utils.TestDivide.test_divide_by_negative_one",
+      "id": "tests.app.test_math_utils.TestDivide.test_divide_decimal_numbers",
       "kind": "spec_function",
-      "name": "test_divide_by_negative_one",
-      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_by_negative_one",
+      "name": "test_divide_decimal_numbers",
+      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_decimal_numbers",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 101
+      "line": 92
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_small_numbers",
@@ -180,7 +164,7 @@
       "name": "test_divide_small_numbers",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_small_numbers",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 106
+      "line": 99
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_large_numbers",
@@ -188,7 +172,7 @@
       "name": "test_divide_large_numbers",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_large_numbers",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 111
+      "line": 105
     },
     {
       "id": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_raises_value_error",
@@ -196,23 +180,23 @@
       "name": "test_divide_by_zero_raises_value_error",
       "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_raises_value_error",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 116
+      "line": 111
     },
     {
-      "id": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error",
+      "id": "tests.app.test_math_utils.TestDivide.test_divide_fractional_results",
       "kind": "spec_function",
-      "name": "test_divide_by_zero_float_raises_value_error",
-      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error",
+      "name": "test_divide_fractional_results",
+      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_fractional_results",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 125
+      "line": 122
     },
     {
-      "id": "tests.app.test_math_utils.TestDivide.test_divide_result_is_float",
+      "id": "tests.app.test_math_utils.TestDivide.test_divide_edge_case_negative_zero",
       "kind": "spec_function",
-      "name": "test_divide_result_is_float",
-      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_result_is_float",
+      "name": "test_divide_edge_case_negative_zero",
+      "qualified_name": "tests.app.test_math_utils.TestDivide.test_divide_edge_case_negative_zero",
       "file_path": "tests/app/test_math_utils.py",
-      "line": 132
+      "line": 129
     }
   ],
   "edges": [
@@ -260,25 +244,19 @@
     },
     {
       "source": "src.app.math_utils.subtract",
-      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative",
+      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_result_negative",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
     {
       "source": "src.app.math_utils.subtract",
-      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property",
+      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_same_numbers",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
     {
       "source": "src.app.math_utils.subtract",
-      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_identity_property",
-      "relation": "validated_by",
-      "confidence": "direct_call"
-    },
-    {
-      "source": "src.app.math_utils.subtract",
-      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property",
+      "target": "tests.app.test_math_utils.TestSubtract.test_subtract_order_matters",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
@@ -296,25 +274,19 @@
     },
     {
       "source": "src.app.math_utils.divide",
-      "target": "tests.app.test_math_utils.TestDivide.test_divide_with_floats",
-      "relation": "validated_by",
-      "confidence": "direct_call"
-    },
-    {
-      "source": "src.app.math_utils.divide",
       "target": "tests.app.test_math_utils.TestDivide.test_divide_by_one",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
     {
       "source": "src.app.math_utils.divide",
-      "target": "tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator",
+      "target": "tests.app.test_math_utils.TestDivide.test_divide_zero_numerator",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
     {
       "source": "src.app.math_utils.divide",
-      "target": "tests.app.test_math_utils.TestDivide.test_divide_by_negative_one",
+      "target": "tests.app.test_math_utils.TestDivide.test_divide_decimal_numbers",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
@@ -338,13 +310,13 @@
     },
     {
       "source": "src.app.math_utils.divide",
-      "target": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error",
+      "target": "tests.app.test_math_utils.TestDivide.test_divide_fractional_results",
       "relation": "validated_by",
       "confidence": "direct_call"
     },
     {
       "source": "src.app.math_utils.divide",
-      "target": "tests.app.test_math_utils.TestDivide.test_divide_result_is_float",
+      "target": "tests.app.test_math_utils.TestDivide.test_divide_edge_case_negative_zero",
       "relation": "validated_by",
       "confidence": "direct_call"
     }
@@ -418,22 +390,17 @@
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_resulting_in_negative",
+            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_result_negative",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_commutative_property",
+            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_same_numbers",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_identity_property",
-            "confidence": "direct_call",
-            "relation": "validated_by"
-          },
-          {
-            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_inverse_property",
+            "spec_id": "tests.app.test_math_utils.TestSubtract.test_subtract_order_matters",
             "confidence": "direct_call",
             "relation": "validated_by"
           }
@@ -458,22 +425,17 @@
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_with_floats",
-            "confidence": "direct_call",
-            "relation": "validated_by"
-          },
-          {
             "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_by_one",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_zero_as_numerator",
+            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_zero_numerator",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_by_negative_one",
+            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_decimal_numbers",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
@@ -493,12 +455,12 @@
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_by_zero_float_raises_value_error",
+            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_fractional_results",
             "confidence": "direct_call",
             "relation": "validated_by"
           },
           {
-            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_result_is_float",
+            "spec_id": "tests.app.test_math_utils.TestDivide.test_divide_edge_case_negative_zero",
             "confidence": "direct_call",
             "relation": "validated_by"
           }

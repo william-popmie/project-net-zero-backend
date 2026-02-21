@@ -499,3 +499,78 @@ def write_graph_mermaid(graph: dict[str, Any], output_file: str | Path) -> None:
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(graph_to_mermaid(graph), encoding="utf-8")
+
+def generate_function_test_pairs(
+    graph: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    """
+    Generate function-test code pairs from the graph.
+    
+    Returns a dict with:
+    {
+        "pairs": [
+            {
+                "function_id": "src.app.math_utils.add",
+                "function_name": "add",
+                "file_path": "src/app/math_utils.py",
+                "function_code": "def add(a, b):\n    return a + b",
+                "tests": [
+                    {
+                        "test_id": "tests.test_math_utils.test_add_returns_sum",
+                        "test_name": "test_add_returns_sum",
+                        "test_code": "def test_add_returns_sum():\n    assert add(2, 3) == 5"
+                    }
+                ]
+            }
+        ]
+    }
+    """
+    pairs = []
+    
+    # Get source functions (not tests)
+    source_nodes = [n for n in graph["nodes"] if n["kind"] == "project_function"]
+    test_nodes = {n["id"]: n for n in graph["nodes"] if n["kind"] == "spec_function"}
+    
+    for source_node in source_nodes:
+        # Get test edges for this function
+        related_edges = [e for e in graph["edges"] if e["source"] == source_node["id"]]
+        related_tests = [test_nodes[e["target"]] for e in related_edges if e["target"] in test_nodes]
+        
+        # Extract function source code
+        func_file = project_root / source_node["file_path"]
+        function_code = extract_function_source(func_file, source_node["qualified_name"])
+        
+        # Extract test source codes
+        test_codes = []
+        for test_node in related_tests:
+            test_file = project_root / test_node["file_path"]
+            test_code = extract_function_source(test_file, test_node["qualified_name"])
+            test_codes.append({
+                "test_id": test_node["id"],
+                "test_name": test_node["name"],
+                "test_code": test_code
+            })
+        
+        pair = {
+            "function_id": source_node["id"],
+            "function_name": source_node["name"],
+            "qualified_name": source_node["qualified_name"],
+            "file_path": source_node["file_path"],
+            "line": source_node["line"],
+            "function_code": function_code,
+            "tests": test_codes
+        }
+        pairs.append(pair)
+    
+    return {"pairs": pairs}
+
+
+def write_function_test_pairs(
+    graph: dict[str, Any], project_root: str | Path, output_file: str | Path
+) -> None:
+    """Write function-test code pairs to JSON file."""
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    pairs_data = generate_function_test_pairs(graph, Path(project_root))
+    output_path.write_text(json.dumps(pairs_data, indent=2), encoding="utf-8")

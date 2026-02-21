@@ -268,7 +268,7 @@ def generate_output_node(state: WorkflowState) -> WorkflowState:
     """
     Node 5: Generate final output with AST tree structure.
     """
-    from .parser.graph_parser import write_graph_json, write_graph_mermaid, write_graph_html
+    from .parser.graph_parser import write_graph_json, write_graph_mermaid, write_graph_html, write_function_test_pairs
     
     print("\n" + "="*60)
     print("STEP 5: FINAL OUTPUT GENERATION")
@@ -287,14 +287,17 @@ def generate_output_node(state: WorkflowState) -> WorkflowState:
         json_path = output_dir / "final_graph.json"
         mermaid_path = output_dir / "final_graph.mmd"
         html_path = output_dir / "final_coverage_report.html"
+        pairs_path = output_dir / "function_test_pairs.json"
         
         write_graph_json(state["graph"], json_path)
         write_graph_mermaid(state["graph"], mermaid_path)
         write_graph_html(state["graph"], html_path)
+        write_function_test_pairs(state["graph"], state["project_root"], pairs_path)
         
         print(f"[OK] JSON output: {json_path}")
         print(f"[OK] Mermaid diagram: {mermaid_path}")
         print(f"[OK] HTML coverage report: {html_path}")
+        print(f"[OK] Function-test pairs: {pairs_path}")
         
         # Generate AST summary
         ast_summary_path = output_dir / "ast_summary.txt"
