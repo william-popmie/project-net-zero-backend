@@ -1,12 +1,20 @@
-from .graph_parser import build_graph, graph_to_html, graph_to_mermaid, write_graph_html, write_graph_json, write_graph_mermaid
-from .ai_spec_generator import generate_specs_for_untested
+from .graph_parser import (
+    FunctionInfo,
+    collect_functions,
+    discover_python_files,
+    extract_function_source,
+    is_test_file,
+    parse_python_file,
+)
+from .ai_spec_generator import determine_test_file_path, generate_tests
 
 __all__ = [
-    "build_graph",
-    "write_graph_json",
-    "write_graph_mermaid",
-    "write_graph_html",
-    "graph_to_html",
-    "graph_to_mermaid",
-    "generate_specs_for_untested",
+    "FunctionInfo",
+    "collect_functions",
+    "discover_python_files",
+    "extract_function_source",
+    "is_test_file",
+    "parse_python_file",
+    "determine_test_file_path",
+    "generate_tests",
 ]

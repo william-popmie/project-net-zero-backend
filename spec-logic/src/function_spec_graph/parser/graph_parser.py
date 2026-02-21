@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import ast
-import inspect
-import json
-from collections import defaultdict
-from dataclasses import asdict, dataclass
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .ai_matcher import MatchResult, match_with_ai
+logger = logging.getLogger(__name__)
 
 EXCLUDED_DIR_NAMES = {
     ".git",
@@ -32,21 +30,14 @@ TEST_FILE_SUFFIXES = ("_test.py", "_spec.py")
 
 
 @dataclass(slots=True)
-class FunctionNode:
+class FunctionInfo:
     id: str
-    kind: str
     name: str
     qualified_name: str
     file_path: str
     line: int
-
-
-@dataclass(slots=True)
-class GraphEdge:
-    source: str
-    target: str
-    relation: str
-    confidence: str
+    end_line: int
+    source_code: str = ""
 
 
 class FunctionCollector(ast.NodeVisitor):
@@ -55,7 +46,7 @@ class FunctionCollector(ast.NodeVisitor):
         self.module_path = module_path
         self.kind = kind
         self.scope_stack: list[str] = []
-        self.collected: list[FunctionNode] = []
+        self.collected: list[FunctionInfo] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> Any:
         self.scope_stack.append(node.name)
@@ -82,13 +73,13 @@ class FunctionCollector(ast.NodeVisitor):
         node_id = qualified_name
 
         self.collected.append(
-            FunctionNode(
+            FunctionInfo(
                 id=node_id,
-                kind=self.kind,
                 name=node.name,
                 qualified_name=qualified_name,
                 file_path=self.file_path.as_posix(),
                 line=node.lineno,
+                end_line=node.end_lineno or node.lineno,
             )
         )
 
@@ -99,7 +90,7 @@ def discover_python_files(project_root: Path) -> list[Path]:
         if any(part in EXCLUDED_DIR_NAMES for part in path.parts):
             continue
         discovered_files.append(path)
-    return discovered_files
+    return sorted(discovered_files)
 
 
 def is_test_file(path: Path) -> bool:
@@ -123,7 +114,11 @@ def parse_python_file(file_path: Path) -> ast.AST | None:
     try:
         source = file_path.read_text(encoding="utf-8")
         return ast.parse(source)
-    except (OSError, UnicodeDecodeError, SyntaxError):
+    except SyntaxError as e:
+        logger.warning("Skipping %s: syntax error: %s", file_path, e)
+        return None
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Skipping %s: %s", file_path, e)
         return None
 
 
@@ -168,409 +163,67 @@ def collect_function_call_map(module_tree: ast.AST, module_path: str) -> dict[st
     return call_map
 
 
-def extract_function_source(
-    file_path: Path, qualified_name: str
-) -> str:
-    """Extract source code for a function by qualified name."""
+def extract_function_source(file_path: Path, qualified_name: str) -> str:
+    """Extract source code for a function by qualified name.
+
+    Handles both top-level functions and class methods by trying
+    increasingly short suffixes of the qualified name.
+    """
     try:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
 
-        # Get the function name from qualified name
-        # For "src.app.math_utils.subtract", we want "subtract"
         parts = qualified_name.split(".")
-        function_name = parts[-1]  # Last part is always the function name
 
-        def find_function(node: ast.AST, name: str) -> ast.AST | None:
-            """Recursively search for function with given name."""
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == name:
-                    return node
-            
+        def navigate(node: ast.AST, remaining: list[str]) -> ast.AST | None:
+            if not remaining:
+                return None
+            target = remaining[0]
+            rest = remaining[1:]
             for child in ast.iter_child_nodes(node):
-                result = find_function(child, name)
-                if result:
-                    return result
+                if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if child.name == target:
+                        if not rest:
+                            return child
+                        result = navigate(child, rest)
+                        if result is not None:
+                            return result
             return None
 
-        target_node = find_function(tree, function_name)
-        if target_node and isinstance(
-            target_node, (ast.FunctionDef, ast.AsyncFunctionDef)
-        ):
-            return ast.unparse(target_node)
+        # Try from most specific (full path) to least (just function name),
+        # so class methods are resolved before ambiguous bare names.
+        for start in range(len(parts)):
+            node = navigate(tree, parts[start:])
+            if node is not None and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return ast.unparse(node)
     except Exception:
         pass
 
     return ""
 
 
-def _calculate_coverage(
-    source_nodes: list[FunctionNode],
-    test_nodes: list[FunctionNode],
-    edges: list[GraphEdge],
-) -> dict[str, Any]:
-    tested_ids: set[str] = {edge.source for edge in edges}
-    untested_nodes = [node for node in source_nodes if node.id not in tested_ids]
-    tested_nodes = [node for node in source_nodes if node.id in tested_ids]
-
-    function_coverage = []
-    for source_node in source_nodes:
-        specs_for_function = [
-            edge for edge in edges if edge.source == source_node.id
-        ]
-        function_coverage.append(
-            {
-                "function_id": source_node.id,
-                "name": source_node.name,
-                "qualified_name": source_node.qualified_name,
-                "file_path": source_node.file_path,
-                "line": source_node.line,
-                "specs": [
-                    {
-                        "spec_id": edge.target,
-                        "confidence": edge.confidence,
-                        "relation": edge.relation,
-                    }
-                    for edge in specs_for_function
-                ],
-                "is_tested": len(specs_for_function) > 0,
-            }
-        )
-
-    coverage_percentage = (
-        (len(tested_nodes) / len(source_nodes) * 100)
-        if source_nodes
-        else 0
-    )
-
-    return {
-        "total_functions": len(source_nodes),
-        "tested_functions": len(tested_nodes),
-        "untested_functions": len(untested_nodes),
-        "coverage_percentage": round(coverage_percentage, 2),
-        "function_coverage": function_coverage,
-        "untested_list": [
-            {
-                "function_id": node.id,
-                "name": node.name,
-                "qualified_name": node.qualified_name,
-                "file_path": node.file_path,
-                "line": node.line,
-            }
-            for node in untested_nodes
-        ],
-    }
-
-
-def _build_edges(
-    source_nodes: list[FunctionNode],
-    test_nodes: list[FunctionNode],
-    test_called_names: dict[str, set[str]],
-    use_ai_matching: bool = False,
-    project_root: Path | None = None,
-) -> list[GraphEdge]:
-    source_node_ids_by_name: dict[str, list[str]] = defaultdict(list)
-    for source_node in source_nodes:
-        source_node_ids_by_name[source_node.name].append(source_node.id)
-
-    edges: list[GraphEdge] = []
-
-    for test_node in test_nodes:
-        matched_source_ids: set[str] = set()
-        confidence = "direct_call"
-
-        for called_name in test_called_names.get(test_node.id, set()):
-            matched_source_ids.update(source_node_ids_by_name.get(called_name, []))
-
-        if not matched_source_ids:
-            confidence = "name_heuristic"
-            lowered_test_name = test_node.name.lower()
-            for prefix in ("test_", "should_", "it_", "spec_"):
-                if lowered_test_name.startswith(prefix):
-                    lowered_test_name = lowered_test_name[len(prefix) :]
-                    break
-
-            for source_name, source_ids in source_node_ids_by_name.items():
-                if source_name.lower() in lowered_test_name:
-                    matched_source_ids.update(source_ids)
-
-        if use_ai_matching and project_root and not matched_source_ids:
-            confidence = "ai"
-            test_src = extract_function_source(
-                project_root / test_node.file_path, test_node.id
-            )
-            for source_node in source_nodes:
-                if source_node.id in matched_source_ids:
-                    continue
-                try:
-                    source_src = extract_function_source(
-                        project_root / source_node.file_path, source_node.id
-                    )
-                    if test_src and source_src:
-                        result = match_with_ai(
-                            test_node.id, test_src,
-                            source_node.id, source_src
-                        )
-                        if result.matches and result.confidence_score > 0.7:
-                            matched_source_ids.add(source_node.id)
-                except Exception:
-                    pass
-
-        for source_id in sorted(matched_source_ids):
-            edges.append(
-                GraphEdge(
-                    source=source_id,
-                    target=test_node.id,
-                    relation="validated_by",
-                    confidence=confidence,
-                )
-            )
-
-    return edges
-
-
-def build_graph(project_root: str | Path, use_ai_matching: bool = False) -> dict[str, Any]:
-    root = Path(project_root).resolve()
-
-    source_nodes: list[FunctionNode] = []
-    test_nodes: list[FunctionNode] = []
-    test_called_names: dict[str, set[str]] = {}
+def collect_functions(project_root: Path) -> list[FunctionInfo]:
+    """Collect all non-test source functions from the project."""
+    root = project_root.resolve()
+    functions: list[FunctionInfo] = []
 
     for file_path in discover_python_files(root):
+        # Use relative path so parent directories outside the project don't
+        # accidentally trigger the test-file heuristic.
+        if is_test_file(file_path.relative_to(root)):
+            continue
+
         module_tree = parse_python_file(file_path)
         if module_tree is None:
             continue
 
         module_path = path_to_module_path(root, file_path)
-        is_test = is_test_file(file_path)
-
         collector = FunctionCollector(
             file_path=file_path.relative_to(root),
             module_path=module_path,
-            kind="spec_function" if is_test else "project_function",
+            kind="project_function",
         )
         collector.visit(module_tree)
+        functions.extend(collector.collected)
 
-        if is_test:
-            test_nodes.extend(collector.collected)
-            call_map = collect_function_call_map(module_tree, module_path)
-            for test_node in collector.collected:
-                test_called_names[test_node.id] = call_map.get(test_node.id, set())
-        else:
-            source_nodes.extend(collector.collected)
-
-    all_nodes = source_nodes + test_nodes
-    edges = _build_edges(
-        source_nodes,
-        test_nodes,
-        test_called_names,
-        use_ai_matching=use_ai_matching,
-        project_root=root,
-    )
-    coverage = _calculate_coverage(source_nodes, test_nodes, edges)
-
-    return {
-        "metadata": {
-            "project_root": root.as_posix(),
-            "source_function_count": len(source_nodes),
-            "spec_function_count": len(test_nodes),
-            "edge_count": len(edges),
-        },
-        "nodes": [asdict(node) for node in all_nodes],
-        "edges": [asdict(edge) for edge in edges],
-        "coverage": coverage,
-    }
-
-
-def write_graph_json(graph: dict[str, Any], output_file: str | Path) -> None:
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
-
-
-def graph_to_html(graph: dict[str, Any]) -> str:
-    coverage = graph["coverage"]
-    nodes = graph["nodes"]
-    edges = graph["edges"]
-
-    nodes_html = ""
-    for node in nodes:
-        node_type = "Project" if node["kind"] == "project_function" else "Test"
-        is_tested = "✓" if node["kind"] == "spec_function" else (
-            "✓" if any(edge["source"] == node["id"] for edge in edges) else "✗"
-        )
-        nodes_html += f"<tr><td>{node['qualified_name']}</td><td>{node['file_path']}:{node['line']}</td><td>{node_type}</td><td>{is_tested}</td></tr>"
-
-    untested_html = ""
-    for node in coverage["untested_list"]:
-        untested_html += f"<li><code>{node['qualified_name']}</code> ({node['file_path']}:{node['line']})</li>"
-
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Function-Spec Coverage Report</title>
-    <style>
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; background: #f5f5f5; }}
-        .container {{ max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        h1, h2 {{ color: #333; }}
-        .stats {{ display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap; }}
-        .stat {{ padding: 15px; border-radius: 6px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; flex: 1; min-width: 150px; }}
-        .stat strong {{ display: block; font-size: 24px; margin-bottom: 5px; }}
-        .stat em {{ font-size: 12px; opacity: 0.9; }}
-        table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
-        th, td {{ border: 1px solid #ddd; padding: 10px; text-align: left; }}
-        th {{ background-color: #667eea; color: white; font-weight: bold; }}
-        tr:nth-child(even) {{ background-color: #f9f9f9; }}
-        .untested {{ background-color: #ffe6e6; }}
-        code {{ background: #f4f4f4; padding: 2px 4px; border-radius: 3px; font-size: 12px; }}
-        .untested-list {{ list-style-type: none; padding: 0; }}
-        .untested-list li {{ padding: 8px; margin: 5px 0; background: #fff3cd; border-left: 4px solid #ffc107; padding-left: 12px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Function-Spec Coverage Report</h1>
-        <div class="stats">
-            <div class="stat">
-                <strong>{coverage['coverage_percentage']}%</strong>
-                <em>Coverage</em>
-            </div>
-            <div class="stat">
-                <strong>{coverage['tested_functions']}/{coverage['total_functions']}</strong>
-                <em>Functions Tested</em>
-            </div>
-            <div class="stat">
-                <strong>{coverage['untested_functions']}</strong>
-                <em>Functions Untested</em>
-            </div>
-        </div>
-        
-        <h2>All Functions</h2>
-        <table>
-            <tr><th>Function</th><th>Location</th><th>Type</th><th>Tested</th></tr>
-            {nodes_html}
-        </table>
-        
-        <h2>Untested Functions ({coverage['untested_functions']})</h2>
-        <ul class="untested-list">
-            {untested_html}
-        </ul>
-    </div>
-</body>
-</html>"""
-    return html
-
-
-def write_graph_html(graph: dict[str, Any], output_file: str | Path) -> None:
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(graph_to_html(graph), encoding="utf-8")
-
-
-def graph_to_mermaid(graph: dict[str, Any]) -> str:
-    def sanitize_mermaid_id(raw_value: str) -> str:
-        allowed = []
-        for character in raw_value:
-            if character.isalnum() or character == "_":
-                allowed.append(character)
-            else:
-                allowed.append("_")
-        return "".join(allowed)
-
-    lines = ["flowchart LR"]
-
-    for node in graph["nodes"]:
-        mermaid_id = sanitize_mermaid_id(node["id"])
-        display_name = node["qualified_name"].replace('"', "'")
-        if node["kind"] == "project_function":
-            lines.append(f'    {mermaid_id}["{display_name}"]')
-        else:
-            lines.append(f'    {mermaid_id}(["{display_name}"])')
-
-    for edge in graph["edges"]:
-        source_mermaid_id = sanitize_mermaid_id(edge["source"])
-        target_mermaid_id = sanitize_mermaid_id(edge["target"])
-        lines.append(f"    {source_mermaid_id} -->|validated_by| {target_mermaid_id}")
-
-    return "\n".join(lines) + "\n"
-
-
-def write_graph_mermaid(graph: dict[str, Any], output_file: str | Path) -> None:
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(graph_to_mermaid(graph), encoding="utf-8")
-
-def generate_function_test_pairs(
-    graph: dict[str, Any], project_root: Path
-) -> dict[str, Any]:
-    """
-    Generate function-test code pairs from the graph.
-    
-    Returns a dict with:
-    {
-        "pairs": [
-            {
-                "function_id": "src.app.math_utils.add",
-                "function_name": "add",
-                "file_path": "src/app/math_utils.py",
-                "function_code": "def add(a, b):\n    return a + b",
-                "tests": [
-                    {
-                        "test_id": "tests.test_math_utils.test_add_returns_sum",
-                        "test_name": "test_add_returns_sum",
-                        "test_code": "def test_add_returns_sum():\n    assert add(2, 3) == 5"
-                    }
-                ]
-            }
-        ]
-    }
-    """
-    pairs = []
-    
-    # Get source functions (not tests)
-    source_nodes = [n for n in graph["nodes"] if n["kind"] == "project_function"]
-    test_nodes = {n["id"]: n for n in graph["nodes"] if n["kind"] == "spec_function"}
-    
-    for source_node in source_nodes:
-        # Get test edges for this function
-        related_edges = [e for e in graph["edges"] if e["source"] == source_node["id"]]
-        related_tests = [test_nodes[e["target"]] for e in related_edges if e["target"] in test_nodes]
-        
-        # Extract function source code
-        func_file = project_root / source_node["file_path"]
-        function_code = extract_function_source(func_file, source_node["qualified_name"])
-        
-        # Extract test source codes
-        test_codes = []
-        for test_node in related_tests:
-            test_file = project_root / test_node["file_path"]
-            test_code = extract_function_source(test_file, test_node["qualified_name"])
-            test_codes.append({
-                "test_id": test_node["id"],
-                "test_name": test_node["name"],
-                "test_code": test_code
-            })
-        
-        pair = {
-            "function_id": source_node["id"],
-            "function_name": source_node["name"],
-            "qualified_name": source_node["qualified_name"],
-            "file_path": source_node["file_path"],
-            "line": source_node["line"],
-            "function_code": function_code,
-            "tests": test_codes
-        }
-        pairs.append(pair)
-    
-    return {"pairs": pairs}
-
-
-def write_function_test_pairs(
-    graph: dict[str, Any], project_root: str | Path, output_file: str | Path
-) -> None:
-    """Write function-test code pairs to JSON file."""
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    pairs_data = generate_function_test_pairs(graph, Path(project_root))
-    output_path.write_text(json.dumps(pairs_data, indent=2), encoding="utf-8")
+    return functions

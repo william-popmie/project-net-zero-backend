@@ -1,453 +1,477 @@
 from __future__ import annotations
 
+import ast
+import json
+import re
 import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage
+
+from .parser.graph_parser import (
+    FunctionCollector,
+    FunctionInfo,
+    collect_function_call_map,
+    collect_functions,
+    discover_python_files,
+    extract_function_source,
+    is_test_file,
+    parse_python_file,
+    path_to_module_path,
+)
+from .parser.ai_spec_generator import determine_test_file_path, generate_tests
 
 
-class WorkflowState(TypedDict):
-    """State that flows through the LangGraph workflow."""
-    
-    # Input
+class FunctionState(TypedDict):
     project_root: Path
-    use_ai_matching: bool
+    function: FunctionInfo
     coverage_threshold: float
-    max_spec_generation_iterations: int
-    
-    # Step 1: AST Parsing
-    graph: dict[str, Any] | None
-    ast_complete: bool
-    
-    # Step 2: Test Matching
-    matching_complete: bool
-    
-    # Step 3: Test Execution & Coverage
-    test_results: dict[str, Any] | None
-    coverage_percentage: float
-    coverage_passed: bool
-    test_execution_complete: bool
-    
-    # Step 4: Spec Generation (if needed)
-    spec_generation_iteration: int
-    spec_generation_results: list[dict[str, Any]]
-    
-    # Final Output
-    final_output_path: Path | None
-    workflow_complete: bool
-    
-    # Error handling
+    max_iterations: int
+
+    existing_test_code: str       # test code found or generated
+    test_file_path: Path | None   # where tests live / will be written
+    coverage_score: float         # 0–100
+    iteration: int
+
+    final_test_code: str          # populated when workflow reaches a terminal state
+    status: str                   # "passed_existing" | "generated" | "failed" | "in_progress"
     errors: list[str]
 
 
-def parse_ast_node(state: WorkflowState) -> WorkflowState:
-    """
-    Node 1: Parse Python project into AST and build initial graph.
-    """
-    from .parser.graph_parser import build_graph
-    
-    print("\n" + "="*60)
-    print("STEP 1: AST PARSING")
-    print("="*60)
-    
-    try:
-        graph = build_graph(
-            state["project_root"],
-            use_ai_matching=state["use_ai_matching"]
-        )
-        
-        metadata = graph["metadata"]
-        print(f"[OK] Parsed {metadata['source_function_count']} project functions")
-        print(f"[OK] Found {metadata['spec_function_count']} spec functions")
-        
-        state["graph"] = graph
-        state["ast_complete"] = True
-        
-    except Exception as e:
-        print(f"[ERROR] AST parsing failed: {e}")
-        state["errors"].append(f"AST parsing: {str(e)}")
-        state["ast_complete"] = False
-    
-    return state
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _detect_python_executable(project_root: Path) -> str:
+    for candidate in (".venv/bin/python", "venv/bin/python", "env/bin/python"):
+        python_path = project_root / candidate
+        if python_path.exists():
+            return str(python_path)
+    # Fall back to the same interpreter that is running this code so that
+    # pytest and coverage.py are guaranteed to be available.
+    return sys.executable
 
 
-def match_tests_node(state: WorkflowState) -> WorkflowState:
-    """
-    Node 2: Match test functions to project functions (already done in build_graph).
-    """
-    print("\n" + "="*60)
-    print("STEP 2: TEST MATCHING")
-    print("="*60)
-    
-    if not state["graph"]:
-        print("[ERROR] No graph available")
-        state["errors"].append("Test matching: No graph available")
-        return state
-    
-    coverage = state["graph"]["coverage"]
-    edges = state["graph"]["edges"]
-    
-    print(f"[OK] Matched {len(edges)} test-function pairs")
-    print(f"[OK] Coverage: {coverage['coverage_percentage']}% "
-          f"({coverage['tested_functions']}/{coverage['total_functions']} tested)")
-    
-    state["matching_complete"] = True
-    return state
+# ---------------------------------------------------------------------------
+# Node 1: lookup_tests_node
+# ---------------------------------------------------------------------------
 
-
-def execute_tests_and_coverage_node(state: WorkflowState) -> WorkflowState:
-    """
-    Node 3: Run pytest with coverage to validate specs and measure code coverage.
-    """
-    print("\n" + "="*60)
-    print("STEP 3: TEST EXECUTION & COVERAGE ANALYSIS")
-    print("="*60)
-    
-    if not state["graph"]:
-        print("[ERROR] No graph available")
-        state["errors"].append("Test execution: No graph available")
-        return state
-    
+def lookup_tests_node(state: FunctionState) -> FunctionState:
+    """Find existing tests that exercise this function."""
     project_root = state["project_root"]
-    
+    function = state["function"]
+    func_name = function.name
+
+    matching_test_code: list[str] = []
+    test_file_path: Path | None = None
+
+    for file_path in discover_python_files(project_root):
+        # Use relative path so parent directories outside the project don't
+        # accidentally trigger the test-file heuristic.
+        if not is_test_file(file_path.relative_to(project_root)):
+            continue
+
+        module_tree = parse_python_file(file_path)
+        if module_tree is None:
+            continue
+
+        module_path = path_to_module_path(project_root, file_path)
+        call_map = collect_function_call_map(module_tree, module_path)
+
+        collector = FunctionCollector(
+            file_path=file_path.relative_to(project_root),
+            module_path=module_path,
+            kind="spec_function",
+        )
+        collector.visit(module_tree)
+
+        for test_func in collector.collected:
+            matched = False
+
+            # Direct call detection
+            called_names = call_map.get(test_func.id, set())
+            if func_name in called_names:
+                matched = True
+
+            # Name heuristic: test name contains source function name as a complete word
+            if not matched:
+                test_name_lower = test_func.name.lower()
+                for prefix in ("test_", "should_", "it_", "spec_"):
+                    if test_name_lower.startswith(prefix):
+                        test_name_lower = test_name_lower[len(prefix):]
+                        break
+                pattern = r"\b" + re.escape(func_name.lower()) + r"\b"
+                if re.search(pattern, test_name_lower):
+                    matched = True
+
+            if matched:
+                test_code = extract_function_source(file_path, test_func.qualified_name)
+                if test_code:
+                    matching_test_code.append(test_code)
+                    if test_file_path is None:
+                        test_file_path = file_path
+
+    state["existing_test_code"] = "\n\n".join(matching_test_code)
+    state["test_file_path"] = test_file_path
+
+    if matching_test_code:
+        rel = test_file_path.relative_to(project_root) if test_file_path else "?"
+        print(f"  [lookup] found {len(matching_test_code)} existing test(s) in {rel}")
+    else:
+        print(f"  [lookup] no existing tests found")
+
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Node 2: evaluate_tests_node
+# ---------------------------------------------------------------------------
+
+def evaluate_tests_node(state: FunctionState) -> FunctionState:
+    """Run existing/generated tests and measure per-function line coverage."""
+    if not state["existing_test_code"]:
+        # Nothing to evaluate yet — routing will send us to create
+        return state
+
+    project_root = state["project_root"]
+    function = state["function"]
+    test_file_path = state["test_file_path"]
+
+    if test_file_path is None or not test_file_path.exists():
+        state["coverage_score"] = 0.0
+        return state
+
+    python_exe = _detect_python_executable(project_root)
+
+    # Top-level source package from the function's file path (e.g. "src")
+    func_file = Path(function.file_path)
+    cov_module = func_file.parts[0] if func_file.parts else "src"
+
     try:
-        # Clean pytest cache to avoid import conflicts
-        print("[*] Cleaning pytest cache...")
-        import shutil
-        cache_dirs = [
-            project_root / ".pytest_cache",
-            project_root / "__pycache__",
-            project_root / "tests" / "__pycache__",
-            # Note: Do NOT delete tests/app - it may contain generated tests!
-            # project_root / "tests" / "app",  
-            project_root / "src" / "__pycache__",
-            project_root / "src" / "app" / "__pycache__",
-        ]
-        for cache_dir in cache_dirs:
-            if cache_dir.exists():
-                shutil.rmtree(cache_dir, ignore_errors=True)
-        
-        # Run pytest with coverage
-        print("[*] Running pytest with coverage.py...")
-        
         result = subprocess.run(
             [
-                "python", "-m", "pytest",
-                "--cov=src",  # Cover the src directory
+                python_exe, "-m", "pytest",
+                str(test_file_path),
+                f"--cov={cov_module}",
                 "--cov-report=json",
-                "--cov-report=term",
-                "-v"
+                "-q",
+                "--tb=short",
             ],
             cwd=project_root,
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=120,
         )
-        
-        # Check if tests passed
-        tests_passed = result.returncode == 0
-        
-        print("\n--- PYTEST OUTPUT ---")
-        print(result.stdout)
-        if result.stderr:
-            print("--- PYTEST STDERR ---")
-            print(result.stderr)
-        print("--- END OUTPUT ---\n")
-        
-        # Read coverage report
+        if result.returncode != 0:
+            print(f"  [evaluate] pytest exit {result.returncode}")
+            if result.stdout.strip():
+                print("  " + result.stdout.strip().splitlines()[-1])
+            if result.stderr.strip():
+                print("  " + result.stderr.strip().splitlines()[-1])
+
         coverage_file = project_root / "coverage.json"
-        coverage_percentage = 0.0
-        
+        coverage_score = 0.0
+
         if coverage_file.exists():
-            import json
-            coverage_data = json.loads(coverage_file.read_text())
-            coverage_percentage = coverage_data.get("totals", {}).get("percent_covered", 0.0)
-            print(f"[OK] Code coverage: {coverage_percentage:.1f}%")
-        else:
-            print("[!] No coverage.json found, using graph coverage instead")
-            coverage_percentage = state["graph"]["coverage"]["coverage_percentage"]
-        
-        # Determine if coverage threshold is met
-        threshold = state["coverage_threshold"]
-        coverage_passed = coverage_percentage >= threshold and tests_passed
-        
-        state["test_results"] = {
-            "tests_passed": tests_passed,
-            "returncode": result.returncode,
-            "output": result.stdout,
-        }
-        state["coverage_percentage"] = coverage_percentage
-        state["coverage_passed"] = coverage_passed
-        state["test_execution_complete"] = True
-        
-        if coverage_passed:
-            print(f"[OK] Coverage threshold met: {coverage_percentage:.1f}% >= {threshold}%")
-        else:
-            if not tests_passed:
-                print(f"[FAIL] Tests failed (exit code {result.returncode})")
-            else:
-                print(f"[FAIL] Coverage below threshold: {coverage_percentage:.1f}% < {threshold}%")
-        
+            coverage_data = json.loads(coverage_file.read_text(encoding="utf-8"))
+            files = coverage_data.get("files", {})
+
+            # Match the coverage entry to this function's file
+            func_file_posix = function.file_path
+            file_cov = files.get(func_file_posix)
+            if file_cov is None:
+                for key, val in files.items():
+                    if key.endswith(func_file_posix) or func_file_posix.endswith(key):
+                        file_cov = val
+                        break
+
+            if file_cov is not None:
+                executed_lines = set(file_cov.get("executed_lines", []))
+                missing_lines = set(file_cov.get("missing_lines", []))
+                # Only count lines that coverage.py considers executable
+                # (executed + missing). This excludes blank lines, comments,
+                # and docstrings that sit inside the function range.
+                all_executable = executed_lines | missing_lines
+                func_range = set(range(function.line, function.end_line + 1))
+                func_executable = func_range & all_executable
+                if func_executable:
+                    coverage_score = len(func_executable & executed_lines) / len(func_executable) * 100
+                else:
+                    coverage_score = 100.0  # no executable lines — trivially covered
+
+        state["coverage_score"] = coverage_score
+
+        # Set terminal status when coverage is sufficient
+        if coverage_score >= state["coverage_threshold"]:
+            state["status"] = "passed_existing" if state["iteration"] == 0 else "generated"
+            if test_file_path.exists():
+                state["final_test_code"] = test_file_path.read_text(encoding="utf-8")
+
     except subprocess.TimeoutExpired:
-        print("[ERROR] Test execution timeout")
-        state["errors"].append("Test execution: Timeout after 60s")
-        state["test_execution_complete"] = False
+        state["errors"].append(f"Test execution timeout for {function.id}")
+        state["coverage_score"] = 0.0
     except Exception as e:
-        print(f"[ERROR] Test execution failed: {e}")
-        state["errors"].append(f"Test execution: {str(e)}")
-        state["test_execution_complete"] = False
-    
+        state["errors"].append(f"Test execution error for {function.id}: {e}")
+        state["coverage_score"] = 0.0
+
+    # Mark as failed when we've run out of iterations
+    if (
+        state["coverage_score"] < state["coverage_threshold"]
+        and state["iteration"] >= state["max_iterations"]
+    ):
+        state["status"] = "failed"
+        if test_file_path and test_file_path.exists():
+            state["final_test_code"] = test_file_path.read_text(encoding="utf-8")
+
     return state
 
 
-def should_generate_specs(state: WorkflowState) -> str:
-    """
-    Conditional routing: Decide if we need to generate more specs.
-    """
-    if not state["test_execution_complete"]:
-        return "output"  # Skip to output if tests couldn't run
-    
-    if state["coverage_passed"]:
-        return "output"  # Go to final output
-    
-    # Check if we've hit max iterations
-    if state["spec_generation_iteration"] >= state["max_spec_generation_iterations"]:
-        print(f"\n[!] Max spec generation iterations reached ({state['max_spec_generation_iterations']})")
-        return "output"
-    
-    return "generate_specs"  # Generate more specs
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+def _route_after_evaluate(state: FunctionState) -> str:
+    if not state["existing_test_code"]:
+        # No tests yet
+        if state["iteration"] >= state["max_iterations"]:
+            return END
+        return "create"
+
+    if state["coverage_score"] >= state["coverage_threshold"]:
+        return END
+
+    if state["iteration"] >= state["max_iterations"]:
+        return END
+
+    return "create"
 
 
-def generate_specs_node(state: WorkflowState) -> WorkflowState:
-    """
-    Node 4: Generate additional spec files using AI for untested/undercovered functions.
-    """
-    from .parser.ai_spec_generator import generate_specs_for_untested
-    
-    print("\n" + "="*60)
-    print(f"STEP 4: AI SPEC GENERATION (Iteration {state['spec_generation_iteration'] + 1})")
-    print("="*60)
-    
-    if not state["graph"]:
-        print("[ERROR] No graph available")
-        return state
-    
+# ---------------------------------------------------------------------------
+# Node 3: create_tests_node
+# ---------------------------------------------------------------------------
+
+def create_tests_node(state: FunctionState) -> FunctionState:
+    """Generate new tests with Claude and write them to the test file."""
+    project_root = state["project_root"]
+    function = state["function"]
+
     try:
-        results = generate_specs_for_untested(
-            state["graph"],
-            state["project_root"],
-            dry_run=False
+        new_test_code = generate_tests(
+            function_id=function.id,
+            function_code=function.source_code,
+            source_file=function.file_path,
+            project_root=project_root,
         )
-        
-        state["spec_generation_results"].append(results)
-        state["spec_generation_iteration"] += 1
-        
-        # Re-parse the project to include new specs
-        print("\n[*] Re-parsing project with new specs...")
-        from .parser.graph_parser import build_graph
-        
-        state["graph"] = build_graph(
-            state["project_root"],
-            use_ai_matching=state["use_ai_matching"]
-        )
-        
-        # Re-run tests (loop back)
-        # LangGraph will call execute_tests_and_coverage_node again
-        state["test_execution_complete"] = False
-        
+
+        # Resolve test file path
+        test_file_path = state["test_file_path"]
+        if test_file_path is None:
+            test_file_path = determine_test_file_path(project_root, function.file_path)
+
+        if test_file_path.exists():
+            existing_content = test_file_path.read_text(encoding="utf-8")
+
+            # Avoid adding functions/classes that already exist
+            try:
+                existing_tree = ast.parse(existing_content)
+                existing_names = {
+                    node.name
+                    for node in ast.walk(existing_tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                }
+                new_tree = ast.parse(new_test_code)
+                new_names = {
+                    node.name
+                    for node in ast.walk(new_tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                }
+                if new_names - existing_names:
+                    final_content = existing_content.rstrip() + "\n\n" + new_test_code + "\n"
+                else:
+                    final_content = existing_content
+            except SyntaxError:
+                final_content = existing_content.rstrip() + "\n\n" + new_test_code + "\n"
+        else:
+            test_file_path.parent.mkdir(parents=True, exist_ok=True)
+            # Create __init__.py so pytest can import from subdirectories
+            init_py = test_file_path.parent / "__init__.py"
+            if not init_py.exists():
+                init_py.write_text("", encoding="utf-8")
+            final_content = new_test_code
+
+        test_file_path.write_text(final_content, encoding="utf-8")
+
+        state["existing_test_code"] = new_test_code
+        state["test_file_path"] = test_file_path
+
     except Exception as e:
-        print(f"[ERROR] Spec generation failed: {e}")
-        state["errors"].append(f"Spec generation: {str(e)}")
-    
+        state["errors"].append(f"Test generation error for {function.id}: {e}")
+
+    # Always increment iteration to prevent infinite loops
+    state["iteration"] = state["iteration"] + 1
     return state
 
 
-def generate_output_node(state: WorkflowState) -> WorkflowState:
-    """
-    Node 5: Generate final output with AST tree structure.
-    """
-    from .parser.graph_parser import write_graph_json, write_graph_mermaid, write_graph_html, write_function_test_pairs
-    
-    print("\n" + "="*60)
-    print("STEP 5: FINAL OUTPUT GENERATION")
-    print("="*60)
-    
-    if not state["graph"]:
-        print("[ERROR] No graph available for output")
-        state["errors"].append("Output generation: No graph available")
-        return state
-    
-    try:
-        output_dir = Path("output/langgraph_workflow")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Write outputs
-        json_path = output_dir / "final_graph.json"
-        mermaid_path = output_dir / "final_graph.mmd"
-        html_path = output_dir / "final_coverage_report.html"
-        pairs_path = output_dir / "function_test_pairs.json"
-        
-        write_graph_json(state["graph"], json_path)
-        write_graph_mermaid(state["graph"], mermaid_path)
-        write_graph_html(state["graph"], html_path)
-        write_function_test_pairs(state["graph"], state["project_root"], pairs_path)
-        
-        print(f"[OK] JSON output: {json_path}")
-        print(f"[OK] Mermaid diagram: {mermaid_path}")
-        print(f"[OK] HTML coverage report: {html_path}")
-        print(f"[OK] Function-test pairs: {pairs_path}")
-        
-        # Generate AST summary
-        ast_summary_path = output_dir / "ast_summary.txt"
-        with open(ast_summary_path, "w", encoding="utf-8") as f:
-            f.write("="*60 + "\n")
-            f.write("AST TREE STRUCTURE SUMMARY\n")
-            f.write("="*60 + "\n\n")
-            
-            for node in state["graph"]["nodes"]:
-                if node["kind"] == "project_function":
-                    f.write(f"Function: {node['qualified_name']}\n")
-                    f.write(f"  File: {node['file_path']}:{node['line']}\n")
-                    
-                    # Find related specs
-                    specs = [
-                        edge for edge in state["graph"]["edges"]
-                        if edge["source"] == node["id"]
-                    ]
-                    if specs:
-                        f.write(f"  Specs ({len(specs)}):\n")
-                        for edge in specs:
-                            spec_node = next(
-                                n for n in state["graph"]["nodes"]
-                                if n["id"] == edge["target"]
-                            )
-                            f.write(f"    - {spec_node['qualified_name']} "
-                                  f"(confidence: {edge['confidence']})\n")
-                    else:
-                        f.write("  Specs: [NONE - UNTESTED]\n")
-                    f.write("\n")
-            
-            f.write("\n" + "="*60 + "\n")
-            f.write("WORKFLOW SUMMARY\n")
-            f.write("="*60 + "\n\n")
-            f.write(f"Coverage: {state['coverage_percentage']:.1f}%\n")
-            f.write(f"Tests passed: {state.get('test_results', {}).get('tests_passed', False)}\n")
-            f.write(f"Spec generation iterations: {state['spec_generation_iteration']}\n")
-            
-            if state["errors"]:
-                f.write(f"\nErrors encountered: {len(state['errors'])}\n")
-                for error in state["errors"]:
-                    f.write(f"  - {error}\n")
-        
-        print(f"[OK] AST summary: {ast_summary_path}")
-        
-        state["final_output_path"] = output_dir
-        state["workflow_complete"] = True
-        
-    except Exception as e:
-        print(f"[ERROR] Output generation failed: {e}")
-        state["errors"].append(f"Output generation: {str(e)}")
-    
-    return state
+# ---------------------------------------------------------------------------
+# Graph construction
+# ---------------------------------------------------------------------------
 
+def _build_per_function_graph():
+    workflow = StateGraph(FunctionState)
 
-def build_workflow() -> StateGraph:
-    """
-    Build the LangGraph workflow for the spec-logic pipeline.
-    """
-    workflow = StateGraph(WorkflowState)
-    
-    # Add nodes
-    workflow.add_node("parse_ast", parse_ast_node)
-    workflow.add_node("match_tests", match_tests_node)
-    workflow.add_node("execute_tests", execute_tests_and_coverage_node)
-    workflow.add_node("generate_specs", generate_specs_node)
-    workflow.add_node("output", generate_output_node)
-    
-    # Define edges
-    workflow.set_entry_point("parse_ast")
-    workflow.add_edge("parse_ast", "match_tests")
-    workflow.add_edge("match_tests", "execute_tests")
-    
-    # Conditional routing after test execution
+    workflow.add_node("lookup", lookup_tests_node)
+    workflow.add_node("evaluate", evaluate_tests_node)
+    workflow.add_node("create", create_tests_node)
+
+    workflow.set_entry_point("lookup")
+    workflow.add_edge("lookup", "evaluate")
+
     workflow.add_conditional_edges(
-        "execute_tests",
-        should_generate_specs,
+        "evaluate",
+        _route_after_evaluate,
         {
-            "generate_specs": "generate_specs",
-            "output": "output"
-        }
+            "create": "create",
+            END: END,
+        },
     )
-    
-    # After spec generation, loop back to test execution
-    workflow.add_edge("generate_specs", "execute_tests")
-    
-    # Output is the final node
-    workflow.add_edge("output", END)
-    
+
+    workflow.add_edge("create", "evaluate")
+
     return workflow.compile()
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
 def run_workflow(
     project_root: Path,
-    use_ai_matching: bool = False,
+    output_path: Path,
     coverage_threshold: float = 80.0,
     max_iterations: int = 3,
-) -> WorkflowState:
+) -> dict[str, Any]:
     """
-    Execute the complete LangGraph workflow.
-    
-    Args:
-        project_root: Root directory of the Python project to analyze
-        use_ai_matching: Whether to use Claude AI for test matching
-        coverage_threshold: Minimum coverage percentage required (0-100)
-        max_iterations: Maximum spec generation iterations
-    
-    Returns:
-        Final workflow state with results
+    Run the per-function LangGraph workflow over an entire project.
+
+    For each source function:
+      1. lookup_node  – find existing tests
+      2. evaluate_node – run pytest with per-function line coverage
+      3. create_node  – ask Claude to generate tests (loops back to evaluate)
+
+    Writes results to output_path as JSON and returns the output dict.
     """
-    initial_state: WorkflowState = {
-        "project_root": project_root,
-        "use_ai_matching": use_ai_matching,
+    root = project_root.resolve()
+
+    print(f"\nScanning project: {root}")
+    functions = collect_functions(root)
+    print(f"Found {len(functions)} source functions")
+
+    # Populate source_code for every function up front
+    for func in functions:
+        func.source_code = extract_function_source(root / func.file_path, func.qualified_name)
+
+    graph = _build_per_function_graph()
+    results: list[dict[str, Any]] = []
+
+    for i, func in enumerate(functions, 1):
+        print(f"\n[{i}/{len(functions)}] Processing: {func.id}")
+
+        if not func.source_code:
+            print("  [!] Could not extract source, skipping")
+            results.append(
+                {
+                    "id": func.id,
+                    "name": func.name,
+                    "file": func.file_path,
+                    "function_code": "",
+                    "test_code": "",
+                    "test_file": None,
+                    "coverage_score": 0.0,
+                    "status": "failed",
+                    "errors": ["Could not extract source code"],
+                }
+            )
+            continue
+
+        initial_state: FunctionState = {
+            "project_root": root,
+            "function": func,
+            "coverage_threshold": coverage_threshold,
+            "max_iterations": max_iterations,
+            "existing_test_code": "",
+            "test_file_path": None,
+            "coverage_score": 0.0,
+            "iteration": 0,
+            "final_test_code": "",
+            "status": "in_progress",
+            "errors": [],
+        }
+
+        try:
+            final_state = graph.invoke(initial_state)
+        except Exception as e:
+            print(f"  [ERROR] Workflow failed: {e}")
+            results.append(
+                {
+                    "id": func.id,
+                    "name": func.name,
+                    "file": func.file_path,
+                    "function_code": func.source_code,
+                    "test_code": "",
+                    "test_file": None,
+                    "coverage_score": 0.0,
+                    "status": "failed",
+                    "errors": [str(e)],
+                }
+            )
+            continue
+
+        test_file = final_state.get("test_file_path")
+        status = final_state.get("status", "failed")
+
+        # Finalize status if still in_progress (e.g. max_iterations == 0)
+        if status == "in_progress":
+            score = final_state.get("coverage_score", 0.0)
+            iters = final_state.get("iteration", 0)
+            if score >= coverage_threshold:
+                status = "passed_existing" if iters == 0 else "generated"
+            else:
+                status = "failed"
+
+        score = final_state.get("coverage_score", 0.0)
+        print(f"  Status: {status}, Coverage: {score:.1f}%")
+
+        # Prefer final_test_code (full file); fall back to existing_test_code (matched functions)
+        test_code_out = final_state.get("final_test_code") or final_state.get(
+            "existing_test_code", ""
+        )
+
+        results.append(
+            {
+                "id": func.id,
+                "name": func.name,
+                "file": func.file_path,
+                "function_code": func.source_code,
+                "test_code": test_code_out,
+                "test_file": str(test_file) if test_file else None,
+                "coverage_score": score,
+                "status": status,
+                "errors": final_state.get("errors", []),
+            }
+        )
+
+    output: dict[str, Any] = {
+        "project_root": str(root),
+        "generated_at": datetime.now().isoformat(),
         "coverage_threshold": coverage_threshold,
-        "max_spec_generation_iterations": max_iterations,
-        "graph": None,
-        "ast_complete": False,
-        "matching_complete": False,
-        "test_results": None,
-        "coverage_percentage": 0.0,
-        "coverage_passed": False,
-        "test_execution_complete": False,
-        "spec_generation_iteration": 0,
-        "spec_generation_results": [],
-        "final_output_path": None,
-        "workflow_complete": False,
-        "errors": [],
+        "functions": results,
     }
-    
-    print("\n" + "="*60)
-    print("LANGGRAPH WORKFLOW STARTED")
-    print("="*60)
-    print(f"Project: {project_root}")
-    print(f"AI Matching: {use_ai_matching}")
-    print(f"Coverage Threshold: {coverage_threshold}%")
-    print(f"Max Iterations: {max_iterations}")
-    
-    workflow = build_workflow()
-    
-    final_state = workflow.invoke(initial_state)
-    
-    print("\n" + "="*60)
-    print("WORKFLOW COMPLETED")
-    print("="*60)
-    print(f"Final Coverage: {final_state['coverage_percentage']:.1f}%")
-    print(f"Output Directory: {final_state['final_output_path']}")
-    
-    if final_state["errors"]:
-        print(f"\nErrors encountered: {len(final_state['errors'])}")
-        for error in final_state["errors"]:
-            print(f"  - {error}")
-    
-    return final_state
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
+    print(f"\nResults written to: {output_path}")
+
+    return output
