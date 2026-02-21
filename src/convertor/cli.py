@@ -1,33 +1,32 @@
-"""CLI for converting optimizer_logic results.json to Python source files."""
+"""CLI for rewriting optimized functions back into a project directory."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from .json_to_python import write_python_files
+from .inplace_rewriter import rewrite_functions_inplace
 
-# Paths are relative to the project root (where this CLI is invoked from).
 DEFAULT_INPUT = Path("src/optimizer_logic/output/results.json")
-DEFAULT_OUTPUT = Path("src/convertor/output")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert optimizer results.json to reconstructed Python source files."
+        description="Rewrite optimized functions in-place in the project directory."
     )
     parser.add_argument(
         "-i",
         "--input",
         default=str(DEFAULT_INPUT),
-        help=f"Path to results.json (default: {DEFAULT_INPUT})",
+        help=f"Path to optimizer results.json (default: {DEFAULT_INPUT})",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        default=str(DEFAULT_OUTPUT),
-        help=f"Output directory for generated .py files (default: {DEFAULT_OUTPUT})",
+        "-p",
+        "--project-dir",
+        required=True,
+        help="Project directory whose source files will be rewritten.",
     )
 
     args = parser.parse_args()
@@ -37,10 +36,16 @@ def main() -> None:
         print(f"[ERROR] Input file not found: {input_path}")
         sys.exit(1)
 
+    project_dir = Path(args.project_dir)
+    if not project_dir.is_dir():
+        print(f"[ERROR] Project directory not found: {project_dir}")
+        sys.exit(1)
+
     try:
         print(f"[*] Reading {input_path}")
-        written = write_python_files(input_path, args.output)
-        print(f"[OK] {len(written)} file(s) written to {args.output}")
+        data = json.loads(input_path.read_text(encoding="utf-8"))
+        modified = rewrite_functions_inplace(project_dir, data.get("functions", []))
+        print(f"[OK] {len(modified)} file(s) updated in {project_dir}")
     except Exception as exc:
         print(f"[ERROR] {exc}")
         sys.exit(1)

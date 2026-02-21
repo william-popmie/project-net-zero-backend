@@ -1,13 +1,14 @@
 """
 Orchestrator — run from anywhere:
 
-    python src/main.py
+    python src/main.py /path/to/project
 
-Edit the CONFIG block below to change behaviour.
+Optimizes Python functions in-place within the given project directory.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import datetime
@@ -20,17 +21,11 @@ from pathlib import Path
 SRC_DIR = Path(__file__).parent
 
 CONFIG = {
-    # Path to the Python project to analyse.
-    "project_path": SRC_DIR / "../input-repo",
-
     # Where the spec-logic output JSON is written.
     "output": SRC_DIR / "spec_logic/output/results.json",
 
     # Where the optimizer output JSON is written.
     "optimizer_output": SRC_DIR / "optimizer_logic/output/results.json",
-
-    # Where the convertor writes the final reconstructed Python files.
-    "convertor_output": SRC_DIR / "../output-repo",
 
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
@@ -52,14 +47,25 @@ load_dotenv(SRC_DIR / ".env")                           # src/.env (optional ove
 from spec_logic.langgraph_workflow import run_workflow           # noqa: E402
 from optimizer_logic.optimizer import optimize_function         # noqa: E402
 from optimizer_logic.function_spec import FunctionSpec          # noqa: E402
-from convertor.json_to_python import write_python_files         # noqa: E402
+from convertor.inplace_rewriter import rewrite_functions_inplace  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    project_path = Path(CONFIG["project_path"]).resolve()
+    parser = argparse.ArgumentParser(
+        description="Optimize Python functions in a project directory."
+    )
+    parser.add_argument(
+        "project_dir",
+        nargs="?",
+        default=str(SRC_DIR / "../input-repo"),
+        help="Path to the project directory to optimize (default: input-repo/)",
+    )
+    args = parser.parse_args()
+
+    project_path = Path(args.project_dir).resolve()
     if not project_path.exists() or not project_path.is_dir():
         print(f"[ERROR] project_path does not exist: {project_path}")
         sys.exit(1)
@@ -114,7 +120,6 @@ if __name__ == "__main__":
         }, indent=2)
     )
 
-    # ── Phase 3: Convert ─────────────────────────────────────────────────────
-    convertor_output_path = Path(CONFIG["convertor_output"]).resolve()
-    written = write_python_files(optimizer_output_path, convertor_output_path)
-    print(f"\n[convertor] {len(written)} file(s) written to {convertor_output_path}")
+    # ── Phase 3: Rewrite in-place ────────────────────────────────────────────
+    modified = rewrite_functions_inplace(project_path, optimizer_results)
+    print(f"\n[rewriter] {len(modified)} file(s) updated in {project_path}")
