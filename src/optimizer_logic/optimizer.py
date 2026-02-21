@@ -2,7 +2,7 @@ from .function_spec import FunctionSpec
 from .graph import build_graph
 
 
-def optimize_function(spec: FunctionSpec) -> dict:
+def optimize_function(spec: FunctionSpec, engine: str = "claude") -> dict:
     graph = build_graph()
     initial_state = {
         "spec": spec,
@@ -14,6 +14,9 @@ def optimize_function(spec: FunctionSpec) -> dict:
         "max_attempts": 4,
         "last_test_output": "",
         "success": False,
+        "engine": engine,
+        "inference_duration": 0.0,
+        "inference_tokens": 0,
     }
     final_state = graph.invoke(initial_state)
     return {
