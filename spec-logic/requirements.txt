@@ -1,0 +1,4 @@
+# Runtime dependencies (none required)
+# Optional dev tooling:
+# ruff==0.9.6
+# pytest==8.3.4
