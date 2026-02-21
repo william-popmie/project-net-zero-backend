@@ -1,0 +1,189 @@
+import os
+import subprocess
+import sys
+import tempfile
+import re
+from typing import TypedDict
+
+import anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
+from langgraph.graph import StateGraph, END
+
+from function_spec import FunctionSpec
+from emissions import measure_emissions_for_source
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class OptimizerState(TypedDict):
+    spec: FunctionSpec
+    current_source: str
+    baseline_emissions: float
+    current_emissions: float
+    test_passed: bool
+    attempt: int
+    max_attempts: int
+    last_test_output: str
+    output_path: str
+    success: bool
+
+
+# ── Nodes ────────────────────────────────────────────────────────────────────
+
+def measure_baseline(state: OptimizerState) -> OptimizerState:
+    print("[measure_baseline] measuring baseline emissions...")
+    spec = state["spec"]
+    emissions = measure_emissions_for_source(spec.function_source, spec.function_name)
+    print(f"[measure_baseline] baseline = {emissions:.2e} kg CO2eq")
+    return {
+        **state,
+        "baseline_emissions": emissions,
+        "current_source": spec.function_source,
+    }
+
+
+def optimize(state: OptimizerState) -> OptimizerState:
+    attempt = state["attempt"] + 1
+    print(f"[optimize] attempt {attempt}/{state['max_attempts']}")
+
+    spec = state["spec"]
+    client = anthropic.Anthropic()
+
+    user_content = (
+        f"Optimize the following Python function to use less CPU and memory "
+        f"(and therefore less energy/carbon emissions). "
+        f"Return ONLY the optimized function inside a ```python code block. "
+        f"Do not include any explanation.\n\n"
+        f"```python\n{state['current_source']}\n```"
+    )
+
+    if attempt > 1 and state["last_test_output"]:
+        user_content += (
+            f"\n\nThe previous version failed the tests. Here is the output:\n"
+            f"```\n{state['last_test_output']}\n```\n"
+            f"Make sure the optimized function still passes these tests:\n"
+            f"```python\n{spec.test_source}\n```"
+        )
+
+    message = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=2048,
+        system=(
+            "You are an expert Python performance engineer. "
+            "When asked to optimize a function, return ONLY the optimized function "
+            "inside a single ```python code block. No explanations, no other text."
+        ),
+        messages=[{"role": "user", "content": user_content}],
+    )
+
+    raw = message.content[0].text
+    # Strip fences
+    match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
+    optimized_source = match.group(1).strip() if match else raw.strip()
+
+    print(f"[optimize] got optimized source ({len(optimized_source)} chars)")
+    return {**state, "current_source": optimized_source, "attempt": attempt}
+
+
+def run_tests(state: OptimizerState) -> OptimizerState:
+    print("[run_tests] running pytest...")
+    spec = state["spec"]
+    combined = state["current_source"] + "\n\n" + spec.test_source
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, dir=PROJECT_ROOT
+    ) as f:
+        f.write(combined)
+        tmp_path = f.name
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", tmp_path, "-v", "--tb=short"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        passed = result.returncode == 0
+        output = result.stdout + result.stderr
+        print(f"[run_tests] {'PASS' if passed else 'FAIL'}")
+        return {**state, "test_passed": passed, "last_test_output": output}
+    finally:
+        os.unlink(tmp_path)
+
+
+def measure_emissions(state: OptimizerState) -> OptimizerState:
+    print("[measure_emissions] measuring optimized emissions...")
+    spec = state["spec"]
+    emissions = measure_emissions_for_source(state["current_source"], spec.function_name)
+    print(f"[measure_emissions] current = {emissions:.2e} kg CO2eq")
+    return {**state, "current_emissions": emissions}
+
+
+def save_output(state: OptimizerState) -> OptimizerState:
+    spec = state["spec"]
+    output_dir = os.path.join(PROJECT_ROOT, "output-folder")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{spec.function_name}_optimized.py")
+
+    with open(output_path, "w") as f:
+        f.write(state["current_source"] + "\n")
+
+    baseline = state["baseline_emissions"]
+    current = state["current_emissions"]
+    reduction = (baseline - current) / baseline * 100 if baseline > 0 else 0.0
+
+    print(f"[save_output] saved to {output_path}")
+    print(f"[save_output] baseline:  {baseline:.2e} kg CO2eq")
+    print(f"[save_output] optimized: {current:.2e} kg CO2eq")
+    print(f"[save_output] reduction: {reduction:.1f}%")
+
+    return {**state, "output_path": output_path, "success": True}
+
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+def route_after_tests(state: OptimizerState) -> str:
+    if state["test_passed"]:
+        return "measure_emissions"
+    if state["attempt"] < state["max_attempts"]:
+        return "optimize"
+    return END
+
+
+def route_after_emissions(state: OptimizerState) -> str:
+    if state["current_emissions"] < state["baseline_emissions"]:
+        return "save_output"
+    if state["attempt"] < state["max_attempts"]:
+        return "optimize"
+    return END
+
+
+# ── Builder ───────────────────────────────────────────────────────────────────
+
+def build_graph():
+    builder = StateGraph(OptimizerState)
+
+    builder.add_node("measure_baseline", measure_baseline)
+    builder.add_node("optimize", optimize)
+    builder.add_node("run_tests", run_tests)
+    builder.add_node("measure_emissions", measure_emissions)
+    builder.add_node("save_output", save_output)
+
+    builder.set_entry_point("measure_baseline")
+    builder.add_edge("measure_baseline", "optimize")
+    builder.add_edge("optimize", "run_tests")
+    builder.add_conditional_edges(
+        "run_tests",
+        route_after_tests,
+        {"measure_emissions": "measure_emissions", "optimize": "optimize", END: END},
+    )
+    builder.add_conditional_edges(
+        "measure_emissions",
+        route_after_emissions,
+        {"save_output": "save_output", "optimize": "optimize", END: END},
+    )
+    builder.add_edge("save_output", END)
+
+    return builder.compile()
