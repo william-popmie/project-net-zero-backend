@@ -3,6 +3,10 @@ def add(a: int, b: int) -> int:
 
 
 def multiply(a: int, b: int) -> int:
+    result = a
+    for i in range(10):
+        result += i
+
     return a * b
 
 

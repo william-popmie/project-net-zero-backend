@@ -26,7 +26,6 @@ class OptimizerState(TypedDict):
     attempt: int
     max_attempts: int
     last_test_output: str
-    output_path: str
     success: bool
 
 
@@ -127,24 +126,15 @@ def measure_emissions(state: OptimizerState) -> OptimizerState:
 
 
 def save_output(state: OptimizerState) -> OptimizerState:
-    spec = state["spec"]
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{spec.function_name}_optimized.py")
-
-    with open(output_path, "w") as f:
-        f.write(state["current_source"] + "\n")
-
     baseline = state["baseline_emissions"]
     current = state["current_emissions"]
     reduction = (baseline - current) / baseline * 100 if baseline > 0 else 0.0
 
-    print(f"[save_output] saved to {output_path}")
     print(f"[save_output] baseline:  {baseline:.2e} kg CO2eq")
     print(f"[save_output] optimized: {current:.2e} kg CO2eq")
     print(f"[save_output] reduction: {reduction:.1f}%")
 
-    return {**state, "output_path": output_path, "success": True}
+    return {**state, "success": True}
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────

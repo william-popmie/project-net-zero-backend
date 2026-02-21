@@ -1,4 +1,4 @@
-"""CLI for converting optimizer_logic results.json to Python test files."""
+"""CLI for converting optimizer_logic results.json to Python source files."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ DEFAULT_OUTPUT = Path("src/convertor/output")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert results.json (function-test pairs) to Python test files."
+        description="Convert optimizer results.json to reconstructed Python source files."
     )
     parser.add_argument(
         "-i",
@@ -29,13 +29,6 @@ def main() -> None:
         default=str(DEFAULT_OUTPUT),
         help=f"Output directory for generated .py files (default: {DEFAULT_OUTPUT})",
     )
-    parser.add_argument(
-        "-f",
-        "--format",
-        choices=["function", "class"],
-        default="function",
-        help="Output format: standalone functions or grouped class (default: function)",
-    )
 
     args = parser.parse_args()
     input_path = Path(args.input)
@@ -46,7 +39,7 @@ def main() -> None:
 
     try:
         print(f"[*] Reading {input_path}")
-        written = write_python_files(input_path, args.output, format_style=args.format)
+        written = write_python_files(input_path, args.output)
         print(f"[OK] {len(written)} file(s) written to {args.output}")
     except Exception as exc:
         print(f"[ERROR] {exc}")
