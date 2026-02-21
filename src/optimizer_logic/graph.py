@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import re
+from pathlib import Path
 from typing import TypedDict
 
 import anthropic
@@ -92,6 +93,18 @@ def run_tests(state: OptimizerState) -> OptimizerState:
     # Strip `self` from test function signatures — test_source may contain
     # class methods extracted without the class wrapper.
     clean_test = re.sub(r"def (test_\w+)\(self(?:,\s*)?", r"def \1(", spec.test_source)
+
+    # Strip imports of the source module — the function is inlined in the combined
+    # file so any "from src.app.math_utils import ..." line would fail when pytest
+    # runs the temp file from /tmp/ where that package doesn't exist.
+    module_dotted = Path(spec.module_path).with_suffix("").as_posix().replace("/", ".")
+    clean_test = re.sub(
+        r"^from\s+" + re.escape(module_dotted) + r"\s+import\s+[^\n]*\n?",
+        "",
+        clean_test,
+        flags=re.MULTILINE,
+    )
+
     combined = "import pytest\n\n" + state["current_source"] + "\n\n" + clean_test
 
     with tempfile.NamedTemporaryFile(
@@ -128,8 +141,17 @@ def measure_emissions(state: OptimizerState) -> OptimizerState:
 def save_output(state: OptimizerState) -> OptimizerState:
     baseline = state["baseline_emissions"]
     current = state["current_emissions"]
-    reduction = (baseline - current) / baseline * 100 if baseline > 0 else 0.0
 
+    # If no improvement was achieved, fall back to the original source.
+    if current >= baseline:
+        print(f"[save_output] no improvement after {state['attempt']} attempt(s) — keeping original")
+        return {
+            **state,
+            "current_source": state["spec"].function_source,
+            "success": True,
+        }
+
+    reduction = (baseline - current) / baseline * 100 if baseline > 0 else 0.0
     print(f"[save_output] baseline:  {baseline:.2e} kg CO2eq")
     print(f"[save_output] optimized: {current:.2e} kg CO2eq")
     print(f"[save_output] reduction: {reduction:.1f}%")
@@ -152,7 +174,7 @@ def route_after_emissions(state: OptimizerState) -> str:
         return "save_output"
     if state["attempt"] < state["max_attempts"]:
         return "optimize"
-    return END
+    return "save_output"  # exhausted attempts — save_output will restore original
 
 
 # ── Builder ───────────────────────────────────────────────────────────────────
@@ -177,7 +199,7 @@ def build_graph():
     builder.add_conditional_edges(
         "measure_emissions",
         route_after_emissions,
-        {"save_output": "save_output", "optimize": "optimize", END: END},
+        {"save_output": "save_output", "optimize": "optimize"},
     )
     builder.add_edge("save_output", END)
 
