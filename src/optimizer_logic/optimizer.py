@@ -13,7 +13,6 @@ def optimize_function(spec: FunctionSpec) -> dict:
         "attempt": 0,
         "max_attempts": 4,
         "last_test_output": "",
-        "output_path": "",
         "success": False,
     }
     final_state = graph.invoke(initial_state)
