@@ -1,8 +1,41 @@
 .venv/
-output/*.json
-output/*.mmd
+venv/
+env/
+
+# Generated outputs
+output/
+*.json
+*.mmd
+*.html
+
+# Input/test data
+input/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Python
 *.egg-info/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.json
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
