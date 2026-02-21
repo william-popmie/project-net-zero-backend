@@ -32,6 +32,7 @@ markdown-it-py==4.0.0
 mdurl==0.1.2
 numpy==2.4.2
 nvidia-ml-py==13.590.48
+openai==1.51.0
 orjson==3.11.7
 ormsgpack==1.12.2
 packaging==26.0

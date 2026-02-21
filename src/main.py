@@ -2,12 +2,14 @@
 Orchestrator — run from anywhere:
 
     python src/main.py
+    python src/main.py --model crusoe
 
-Edit the CONFIG block below to change behaviour.
+Edit the CONFIG block below to change other behaviour.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import datetime
@@ -35,8 +37,11 @@ CONFIG = {
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
 
-    # How many times Claude may attempt to improve tests for a single function.
+    # How many times the model may attempt to improve tests for a single function.
     "max_iterations": 3,
+
+    # Inference engine: "claude" or "crusoe"
+    "engine": "claude",
 }
 
 # ---------------------------------------------------------------------------
@@ -59,6 +64,16 @@ from convertor.json_to_python import write_python_files         # noqa: E402
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Project Net Zero optimiser")
+    parser.add_argument(
+        "--model",
+        choices=["claude", "crusoe"],
+        default=CONFIG["engine"],
+        help="Inference engine to use (default: %(default)s)",
+    )
+    args = parser.parse_args()
+    CONFIG["engine"] = args.model
+
     project_path = Path(CONFIG["project_path"]).resolve()
     if not project_path.exists() or not project_path.is_dir():
         print(f"[ERROR] project_path does not exist: {project_path}")
@@ -69,6 +84,7 @@ if __name__ == "__main__":
         output_path=Path(CONFIG["output"]),
         coverage_threshold=float(CONFIG["coverage_threshold"]),
         max_iterations=int(CONFIG["max_iterations"]),
+        engine=CONFIG["engine"],
     )
 
     functions = output.get("functions", [])
@@ -96,7 +112,7 @@ if __name__ == "__main__":
             function_source=func_result["function_code"],
             test_source=func_result["test_code"],
         )
-        result = optimize_function(spec)
+        result = optimize_function(spec, engine=CONFIG["engine"])
         optimizer_results.append({
             "id": func_result["id"],
             "name": func_result["name"],

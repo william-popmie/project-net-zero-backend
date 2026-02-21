@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 from typing import TypedDict
 
-import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,6 +13,7 @@ from langgraph.graph import StateGraph, END
 
 from .function_spec import FunctionSpec
 from .emissions import measure_emissions_for_source
+from . import llm_client
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,6 +28,9 @@ class OptimizerState(TypedDict):
     max_attempts: int
     last_test_output: str
     success: bool
+    engine: str  # "claude" or "crusoe"
+    inference_duration: float
+    inference_tokens: int
 
 
 # ── Nodes ────────────────────────────────────────────────────────────────────
@@ -46,45 +49,27 @@ def measure_baseline(state: OptimizerState) -> OptimizerState:
 
 def optimize(state: OptimizerState) -> OptimizerState:
     attempt = state["attempt"] + 1
-    print(f"[optimize] attempt {attempt}/{state['max_attempts']}")
+    print(f"[optimize] attempt {attempt}/{state['max_attempts']} (engine={state['engine']})")
 
     spec = state["spec"]
-    client = anthropic.Anthropic()
+    last_test_output = state["last_test_output"] if attempt > 1 else ""
 
-    user_content = (
-        f"Optimize the following Python function to use less CPU and memory "
-        f"(and therefore less energy/carbon emissions). "
-        f"Return ONLY the optimized function inside a ```python code block. "
-        f"Do not include any explanation.\n\n"
-        f"```python\n{state['current_source']}\n```"
+    result = llm_client.rewrite(
+        source_code=state["current_source"],
+        test_code=spec.test_source,
+        last_test_output=last_test_output,
+        engine=state["engine"],
     )
 
-    if attempt > 1 and state["last_test_output"]:
-        user_content += (
-            f"\n\nThe previous version failed the tests. Here is the output:\n"
-            f"```\n{state['last_test_output']}\n```\n"
-            f"Make sure the optimized function still passes these tests:\n"
-            f"```python\n{spec.test_source}\n```"
-        )
-
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=2048,
-        system=(
-            "You are an expert Python performance engineer. "
-            "When asked to optimize a function, return ONLY the optimized function "
-            "inside a single ```python code block. No explanations, no other text."
-        ),
-        messages=[{"role": "user", "content": user_content}],
-    )
-
-    raw = message.content[0].text
-    # Strip fences
-    match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
-    optimized_source = match.group(1).strip() if match else raw.strip()
-
-    print(f"[optimize] got optimized source ({len(optimized_source)} chars)")
-    return {**state, "current_source": optimized_source, "attempt": attempt}
+    optimized_source = result["rewritten_code"]
+    print(f"[optimize] got optimized source ({len(optimized_source)} chars) in {result['duration_seconds']:.1f}s")
+    return {
+        **state,
+        "current_source": optimized_source,
+        "attempt": attempt,
+        "inference_duration": state.get("inference_duration", 0) + result["duration_seconds"],
+        "inference_tokens": state.get("inference_tokens", 0) + result["usage"].get("total_tokens", 0),
+    }
 
 
 def run_tests(state: OptimizerState) -> OptimizerState:

@@ -30,6 +30,7 @@ class FunctionState(TypedDict):
     function: FunctionInfo
     coverage_threshold: float
     max_iterations: int
+    engine: str                     # "claude" or "crusoe"
 
     existing_test_code: str         # test code found or generated
     matched_test_names: list[str]   # names found by lookup (for before/after display)
@@ -265,7 +266,8 @@ def create_tests_node(state: FunctionState) -> FunctionState:
     project_root = state["project_root"]
     function = state["function"]
 
-    print(f"  [generate] asking Claude (iteration {state['iteration'] + 1})...")
+    engine = state.get("engine", "claude")
+    print(f"  [generate] asking {engine} (iteration {state['iteration'] + 1})...")
 
     try:
         new_test_code = generate_tests(
@@ -273,6 +275,7 @@ def create_tests_node(state: FunctionState) -> FunctionState:
             function_code=function.source_code,
             source_file=function.file_path,
             project_root=project_root,
+            engine=engine,
         )
 
         test_file_path = state["test_file_path"]
@@ -361,6 +364,7 @@ def run_workflow(
     output_path: Path,
     coverage_threshold: float = 80.0,
     max_iterations: int = 3,
+    engine: str = "claude",
 ) -> dict[str, Any]:
     root = project_root.resolve()
 
@@ -396,6 +400,7 @@ def run_workflow(
             "function": func,
             "coverage_threshold": coverage_threshold,
             "max_iterations": max_iterations,
+            "engine": engine,
             "existing_test_code": "",
             "matched_test_names": [],
             "test_file_path": None,
