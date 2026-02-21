@@ -8,6 +8,7 @@ dependencies = []
 [project.scripts]
 function-spec-graph = "function_spec_graph.cli:main"
 function-spec-workflow = "function_spec_graph.workflow_cli:main"
+function-spec-convert = "function_spec_graph.converters.converter_cli:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
