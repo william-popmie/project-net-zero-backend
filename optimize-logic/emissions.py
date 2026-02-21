@@ -12,7 +12,7 @@ from codecarbon import EmissionsTracker
 
 {function_source}
 
-tracker = EmissionsTracker(save_to_file=False, measure_power_secs=1, log_level="ERROR")
+tracker = EmissionsTracker(save_to_file=False, log_level="ERROR")
 tracker.start()
 for _ in range({iterations}):
     {benchmark_call}
@@ -25,7 +25,7 @@ def measure_emissions_for_source(
     function_source: str,
     function_name: str,
     benchmark_call: str | None = None,
-    iterations: int = 10_000,
+    iterations: int = 1_000,
 ) -> float:
     if benchmark_call is None:
         benchmark_call = f"{function_name}(97)"

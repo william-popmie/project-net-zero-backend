@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import re
+import time
 from typing import TypedDict
 
 import anthropic
@@ -13,6 +14,7 @@ from langgraph.graph import StateGraph, END
 
 from function_spec import FunctionSpec
 from emissions import measure_emissions_for_source
+import crusoe_client
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,6 +30,9 @@ class OptimizerState(TypedDict):
     last_test_output: str
     output_path: str
     success: bool
+    engine: str  # "claude" or "crusoe"
+    inference_duration: float
+    inference_tokens: int
 
 
 # ── Nodes ────────────────────────────────────────────────────────────────────
@@ -35,7 +40,7 @@ class OptimizerState(TypedDict):
 def measure_baseline(state: OptimizerState) -> OptimizerState:
     print("[measure_baseline] measuring baseline emissions...")
     spec = state["spec"]
-    emissions = measure_emissions_for_source(spec.function_source, spec.function_name)
+    emissions = measure_emissions_for_source(spec.function_source, spec.function_name, benchmark_call=spec.benchmark_call or None)
     print(f"[measure_baseline] baseline = {emissions:.2e} kg CO2eq")
     return {
         **state,
@@ -67,6 +72,7 @@ def optimize(state: OptimizerState) -> OptimizerState:
             f"```python\n{spec.test_source}\n```"
         )
 
+    start = time.time()
     message = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=2048,
@@ -77,14 +83,44 @@ def optimize(state: OptimizerState) -> OptimizerState:
         ),
         messages=[{"role": "user", "content": user_content}],
     )
+    call_duration = time.time() - start
 
     raw = message.content[0].text
     # Strip fences
     match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
     optimized_source = match.group(1).strip() if match else raw.strip()
 
-    print(f"[optimize] got optimized source ({len(optimized_source)} chars)")
-    return {**state, "current_source": optimized_source, "attempt": attempt}
+    print(f"[optimize] got optimized source ({len(optimized_source)} chars) in {call_duration:.1f}s")
+    return {
+        **state,
+        "current_source": optimized_source,
+        "attempt": attempt,
+        "inference_duration": state.get("inference_duration", 0) + call_duration,
+        "inference_tokens": state.get("inference_tokens", 0) + message.usage.input_tokens + message.usage.output_tokens,
+    }
+
+
+def optimize_crusoe(state: OptimizerState) -> OptimizerState:
+    attempt = state["attempt"] + 1
+    print(f"[optimize_crusoe] attempt {attempt}/{state['max_attempts']}")
+
+    spec = state["spec"]
+    last_test_output = state["last_test_output"] if attempt > 1 else ""
+
+    result = crusoe_client.rewrite(
+        source_code=state["current_source"],
+        test_code=spec.test_source if last_test_output else "",
+        last_test_output=last_test_output,
+    )
+
+    print(f"[optimize_crusoe] got optimized source ({len(result['rewritten_code'])} chars) in {result['duration_seconds']}s")
+    return {
+        **state,
+        "current_source": result["rewritten_code"],
+        "attempt": attempt,
+        "inference_duration": state.get("inference_duration", 0) + result["duration_seconds"],
+        "inference_tokens": state.get("inference_tokens", 0) + result["usage"].get("total_tokens", 0),
+    }
 
 
 def run_tests(state: OptimizerState) -> OptimizerState:
@@ -116,7 +152,7 @@ def run_tests(state: OptimizerState) -> OptimizerState:
 def measure_emissions(state: OptimizerState) -> OptimizerState:
     print("[measure_emissions] measuring optimized emissions...")
     spec = state["spec"]
-    emissions = measure_emissions_for_source(state["current_source"], spec.function_name)
+    emissions = measure_emissions_for_source(state["current_source"], spec.function_name, benchmark_call=spec.benchmark_call or None)
     print(f"[measure_emissions] current = {emissions:.2e} kg CO2eq")
     return {**state, "current_emissions": emissions}
 
@@ -162,28 +198,60 @@ def route_after_emissions(state: OptimizerState) -> str:
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
-def build_graph():
+def route_after_tests_crusoe(state: OptimizerState) -> str:
+    if state["test_passed"]:
+        return "measure_emissions"
+    if state["attempt"] < state["max_attempts"]:
+        return "optimize_crusoe"
+    return END
+
+
+def route_after_emissions_crusoe(state: OptimizerState) -> str:
+    if state["current_emissions"] < state["baseline_emissions"]:
+        return "save_output"
+    if state["attempt"] < state["max_attempts"]:
+        return "optimize_crusoe"
+    return END
+
+
+def build_graph(engine: str = "claude"):
     builder = StateGraph(OptimizerState)
 
     builder.add_node("measure_baseline", measure_baseline)
-    builder.add_node("optimize", optimize)
     builder.add_node("run_tests", run_tests)
     builder.add_node("measure_emissions", measure_emissions)
     builder.add_node("save_output", save_output)
 
-    builder.set_entry_point("measure_baseline")
-    builder.add_edge("measure_baseline", "optimize")
-    builder.add_edge("optimize", "run_tests")
-    builder.add_conditional_edges(
-        "run_tests",
-        route_after_tests,
-        {"measure_emissions": "measure_emissions", "optimize": "optimize", END: END},
-    )
-    builder.add_conditional_edges(
-        "measure_emissions",
-        route_after_emissions,
-        {"save_output": "save_output", "optimize": "optimize", END: END},
-    )
-    builder.add_edge("save_output", END)
+    if engine == "crusoe":
+        builder.add_node("optimize_crusoe", optimize_crusoe)
+        builder.set_entry_point("measure_baseline")
+        builder.add_edge("measure_baseline", "optimize_crusoe")
+        builder.add_edge("optimize_crusoe", "run_tests")
+        builder.add_conditional_edges(
+            "run_tests",
+            route_after_tests_crusoe,
+            {"measure_emissions": "measure_emissions", "optimize_crusoe": "optimize_crusoe", END: END},
+        )
+        builder.add_conditional_edges(
+            "measure_emissions",
+            route_after_emissions_crusoe,
+            {"save_output": "save_output", "optimize_crusoe": "optimize_crusoe", END: END},
+        )
+    else:
+        builder.add_node("optimize", optimize)
+        builder.set_entry_point("measure_baseline")
+        builder.add_edge("measure_baseline", "optimize")
+        builder.add_edge("optimize", "run_tests")
+        builder.add_conditional_edges(
+            "run_tests",
+            route_after_tests,
+            {"measure_emissions": "measure_emissions", "optimize": "optimize", END: END},
+        )
+        builder.add_conditional_edges(
+            "measure_emissions",
+            route_after_emissions,
+            {"save_output": "save_output", "optimize": "optimize", END: END},
+        )
 
+    builder.add_edge("save_output", END)
     return builder.compile()

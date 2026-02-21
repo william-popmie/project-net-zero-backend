@@ -6,3 +6,4 @@ class FunctionSpec:
     module_path: str       # absolute path to the source file
     function_source: str   # raw source string of just the function
     test_source: str       # raw source string of generated test stubs
+    benchmark_call: str = ""  # custom call for emissions measurement
