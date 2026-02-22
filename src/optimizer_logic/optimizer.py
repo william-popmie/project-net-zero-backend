@@ -31,6 +31,7 @@ load_dotenv()
 def run_optimizer(
     spec_results_path: Optional[Path] = None,
     output_path: Optional[Path] = None,
+    engine: str = "claude",
 ) -> dict[str, Any]:
     """Read spec_logic/output/results.json, run per-function LangGraph, write output.
 
@@ -113,6 +114,7 @@ def run_optimizer(
                 "retry_reason": "",
                 "success": False,
                 "skip_reason": None,
+                "engine": engine,
             }
 
             try:

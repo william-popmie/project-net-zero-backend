@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ast
-import os
 import re
 
-import anthropic
-
-MODEL = "claude-haiku-4-5-20251001"
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from optimizer_logic import llm_client
 
 
 def _extract_code(raw: str) -> str:
@@ -29,20 +29,16 @@ def generate_spec(
     function_id: str,
     function_source: str,
     file_path: str,
+    engine: str = "claude",
 ) -> str:
-    """Call Claude to generate a concise pytest spec for one function.
+    """Generate a concise pytest spec for one function via the requested engine.
 
     Returns:
         Valid Python test code as a string.
 
     Raises:
-        ValueError: if the API key is missing, response is empty,
-                    or returned code is not valid Python.
+        ValueError: if the response is empty or returned code is not valid Python.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
-
     prompt = f"""Write a short pytest test file for the function below. Keep it under 40 lines.
 
 Function: {function_id}
@@ -59,18 +55,13 @@ Requirements:
 - No setup/teardown boilerplate
 - Output ONLY raw Python, no markdown, no commentary"""
 
-    client = anthropic.Anthropic(api_key=api_key)
     last_err: Exception | None = None
 
     for attempt in range(1, 2):  # up to 1 attempts
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        code = _extract_code(response.content[0].text)
+        raw = llm_client.generate_spec(prompt, engine=engine)
+        code = _extract_code(raw)
         if not code:
-            last_err = ValueError("Claude returned empty response")
+            last_err = ValueError(f"{engine} returned empty response")
             continue
         try:
             ast.parse(code)
