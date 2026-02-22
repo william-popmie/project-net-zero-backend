@@ -18,7 +18,7 @@ MEASURE_SCRIPT = """\
 from codecarbon import EmissionsTracker
 import pytest
 
-tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR", save_to_file=False)
+tracker = EmissionsTracker(measure_power_secs=0.1, log_level="ERROR", save_to_file=False)
 tracker.start()
 exit_code = pytest.main(["tests/", "-v", "--tb=short"])
 emissions = tracker.stop()
@@ -135,7 +135,7 @@ def run_spec(python: Path, tmp: Path) -> tuple[bool, str]:
 def measure_emissions_via_pytest(
     python: Path,
     tmp: Path,
-    runs: int = 3,
+    runs: int = 1,
 ) -> tuple[float, bool]:
     """Run measure.py inside venv *runs* times and return the average kg CO2eq.
 

@@ -117,7 +117,7 @@ def measure_baseline(state: OptimizerState) -> dict:
     with tempfile.TemporaryDirectory(prefix="optimizer_baseline_") as tmp_str:
         tmp = pathlib.Path(tmp_str)
         build_project_dir(tmp, func_record, full_source)
-        avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=3)
+        avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=1)
 
     if not all_passed or avg_emissions == 0.0:
         reason = "tests failed" if not all_passed else "measurement returned 0"
@@ -240,7 +240,7 @@ def measure_optimized(state: OptimizerState) -> dict:
     with tempfile.TemporaryDirectory(prefix="optimizer_measure_") as tmp_str:
         tmp = pathlib.Path(tmp_str)
         build_project_dir(tmp, func_record, state["current_full_source"])
-        avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=3)
+        avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=1)
 
     if baseline > 0:
         pct = (avg_emissions - baseline) / baseline * 100
