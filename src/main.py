@@ -8,10 +8,8 @@ Edit the CONFIG block below to change behaviour.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -101,8 +99,7 @@ load_dotenv(SRC_DIR / "../.env")                        # repo-root .env
 load_dotenv(SRC_DIR / ".env")                           # src/.env (optional override)
 
 from spec_logic.langgraph_workflow import run_workflow           # noqa: E402
-from optimizer_logic.optimizer import optimize_function         # noqa: E402
-from optimizer_logic.function_spec import FunctionSpec          # noqa: E402
+from optimizer_logic.optimizer import run_optimizer             # noqa: E402
 from convertor.json_to_python import write_python_files         # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -137,35 +134,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # ── Phase 2: Optimize ────────────────────────────────────────────────────
-    optimizer_results = []
-    for func_result in output.get("functions", []):
-        if func_result["status"] not in ("passed_existing", "generated"):
-            continue
-        if not func_result["function_code"] or not func_result["test_code"]:
-            continue
-
-        spec = FunctionSpec(
-            function_name=func_result["name"],
-            module_path=func_result["file"],
-            function_source=func_result["function_code"],
-            test_source=func_result["test_code"],
-        )
-        result = optimize_function(spec)
-        optimizer_results.append({
-            "id": func_result["id"],
-            "name": func_result["name"],
-            "file": func_result["file"],
-            **result,
-        })
-
     optimizer_output_path = Path(CONFIG["optimizer_output"])
-    optimizer_output_path.parent.mkdir(parents=True, exist_ok=True)
-    optimizer_output_path.write_text(
-        json.dumps({
-            "project_root": str(project_path),
-            "generated_at": datetime.now().isoformat(),
-            "functions": optimizer_results,
-        }, indent=2)
+    run_optimizer(
+        spec_results_path=Path(CONFIG["output"]),
+        output_path=optimizer_output_path,
     )
 
     # ── Phase 3: Convert ─────────────────────────────────────────────────────
