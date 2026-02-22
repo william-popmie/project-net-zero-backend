@@ -25,7 +25,7 @@ CONFIG = {
     "output": SRC_DIR / "spec_logic/output/results.json",
 
     # Where the optimizer output JSON is written.
-    "optimizer_output": SRC_DIR / "optimizer_logic/output/results.json",
+    "optimizer_output": SRC_DIR / "optimizer_logic/output/result.json",
 
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
@@ -112,23 +112,22 @@ def run_pipeline(project_path: Path) -> list[dict]:
     output = run_workflow(
         project_root=project_path,
         output_path=Path(CONFIG["output"]),
-        coverage_threshold=float(CONFIG["coverage_threshold"]),
-        max_iterations=int(CONFIG["max_iterations"]),
     )
 
     functions = output.get("functions", [])
     failed = [f for f in functions if f["status"] == "failed"]
 
     if failed:
-        names = [f["id"] for f in failed]
-        print(f"\n[pipeline] failed functions: {names}")
+        print(f"\n[warning] {len(failed)} function(s) failed spec generation — skipping in optimizer:")
+        for f in failed:
+            print(f"  - {f['id']}")
 
     # ── Phase 2: Optimize ────────────────────────────────────────────────
     optimizer_results = []
     for func_result in functions:
         if func_result["status"] not in ("passed_existing", "generated"):
             continue
-        if not func_result["function_code"] or not func_result["test_code"]:
+        if not func_result.get("function_code") or not func_result.get("test_code"):
             continue
 
         spec = FunctionSpec(
@@ -137,7 +136,8 @@ def run_pipeline(project_path: Path) -> list[dict]:
             function_source=func_result["function_code"],
             test_source=func_result["test_code"],
         )
-        # Hier zat mogelijk je 'int' error als spec niet goed gevuld was
+        
+        # Voer de optimalisatie uit
         result = optimize_function(spec)
         optimizer_results.append({
             "id": func_result["id"],
@@ -146,7 +146,7 @@ def run_pipeline(project_path: Path) -> list[dict]:
             **result,
         })
 
-    # Optioneel: schrijf resultaten weg
+    # Schrijf tussenresultaten weg voor de logs
     optimizer_output_path = Path(CONFIG["optimizer_output"])
     run_optimizer(
         spec_results_path=Path(CONFIG["output"]),
@@ -154,6 +154,7 @@ def run_pipeline(project_path: Path) -> list[dict]:
     )
 
     # ── Phase 3: Rewrite in-place ────────────────────────────────────────
+    # We kiezen voor de in-place rewrite (Wout's integratie) voor de demo
     modified = rewrite_functions_inplace(project_path, optimizer_results)
     print(f"\n[rewriter] {len(modified)} file(s) updated in {project_path}")
 
@@ -181,7 +182,7 @@ if __name__ == "__main__":
         print(f"[ERROR] project_path does not exist: {input_repo_dir}")
         sys.exit(1)
 
-    # Gebruik de slimme discovery functies
+    # Gebruik de slimme discovery functies uit de main tak
     project_path = find_python_project_root(input_repo_dir)
     install_input_repo_requirements(project_path)
 
