@@ -2,12 +2,14 @@
 Orchestrator — run from anywhere:
 
     python src/main.py
+    python src/main.py --model crusoe
 
-Edit the CONFIG block below to change behaviour.
+Edit the CONFIG block below to change other behaviour.
 """
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -107,6 +109,16 @@ from convertor.json_to_python import write_python_files         # noqa: E402
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Net-zero optimizer pipeline")
+    parser.add_argument(
+        "--model",
+        choices=["claude", "crusoe"],
+        default="claude",
+        help="Inference engine to use (default: claude)",
+    )
+    args = parser.parse_args()
+    engine = args.model
+
     input_repo_dir = Path(CONFIG["project_path"]).resolve()
     if not input_repo_dir.exists() or not input_repo_dir.is_dir():
         print(f"[ERROR] project_path does not exist: {input_repo_dir}")
@@ -118,6 +130,7 @@ if __name__ == "__main__":
     output = run_workflow(
         project_root=project_path,
         output_path=Path(CONFIG["output"]),
+        engine=engine,
     )
 
     functions = output.get("functions", [])
@@ -133,6 +146,7 @@ if __name__ == "__main__":
     run_optimizer(
         spec_results_path=Path(CONFIG["output"]),
         output_path=optimizer_output_path,
+        engine=engine,
     )
 
     # ── Phase 3: Convert ─────────────────────────────────────────────────────

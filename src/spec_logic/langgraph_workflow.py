@@ -20,6 +20,7 @@ class FunctionState(TypedDict):
     spec_code: str
     status: str    # "generated" | "failed"
     error: str
+    engine: str    # "claude" or "crusoe"
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +29,14 @@ class FunctionState(TypedDict):
 
 def generate_spec_node(state: FunctionState) -> FunctionState:
     func = state["function"]
+    engine = state.get("engine", "claude")
     print(f"  [generate] {func.qualified_name}  ({func.file_path}) ...")
     try:
         code = generate_spec(
             function_id=func.id,
             function_source=func.source_code,
             file_path=func.file_path,
+            engine=engine,
         )
         state["spec_code"] = code
         state["status"] = "generated"
@@ -64,6 +67,7 @@ def _build_graph():
 def run_workflow(
     project_root: Path,
     output_path: Path,
+    engine: str = "claude",
 ) -> dict[str, Any]:
     root = project_root.resolve()
 
@@ -84,6 +88,7 @@ def run_workflow(
             "spec_code": "",
             "status": "pending",
             "error": "",
+            "engine": engine,
         }
         try:
             final = graph.invoke(initial)

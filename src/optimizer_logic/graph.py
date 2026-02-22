@@ -28,10 +28,11 @@ import re
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
+
+from . import llm_client
 
 from .venv_runner import (
     build_project_dir,
@@ -63,6 +64,7 @@ class OptimizerState(TypedDict):
     retry_reason: str            # human-readable reason for current retry
     success: bool
     skip_reason: Optional[str]
+    engine: str                  # inference engine: "claude" or "crusoe"
 
 
 # ---------------------------------------------------------------------------
@@ -143,17 +145,24 @@ def optimize(state: OptimizerState) -> dict:
     func_record = state["func_record"]
     retry_reason = state.get("retry_reason", "")
 
-    print("  generating new code")
+    engine = state.get("engine", "claude")
+    print(f"  generating new code (engine={engine})")
     if attempt > 1 and retry_reason:
         print(f"  (retry {attempt}/{state['max_attempts']}: {retry_reason})")
-
-    client = anthropic.Anthropic()
 
     # current_function_code already has the original file indentation
     current_code = state["current_function_code"]
     spec_code = func_record.get("spec_code", "")
     start_line = func_record.get("line", 1)
     indent = _get_indent(state["full_source"], start_line)
+
+    system_prompt = (
+        "You are an expert Python performance engineer. "
+        "When asked to optimize a function, return ONLY the optimized function "
+        "inside a single ```python code block. "
+        "Match the original indentation exactly — if the original has 4-space leading indent, keep it. "
+        "No explanations, no other text."
+    )
 
     user_content = (
         "Optimize the following Python function to reduce CPU usage and energy consumption.\n\n"
@@ -171,20 +180,12 @@ def optimize(state: OptimizerState) -> dict:
             f"The function must pass these tests:\n```python\n{spec_code}\n```"
         )
 
-    message = client.messages.create(
-        model="claude-opus-4-6",
+    raw, _, _ = llm_client.call_model(
+        system=system_prompt,
+        user=user_content,
+        engine=engine,
         max_tokens=4096,
-        system=(
-            "You are an expert Python performance engineer. "
-            "When asked to optimize a function, return ONLY the optimized function "
-            "inside a single ```python code block. "
-            "Match the original indentation exactly — if the original has 4-space leading indent, keep it. "
-            "No explanations, no other text."
-        ),
-        messages=[{"role": "user", "content": user_content}],
     )
-
-    raw = message.content[0].text
 
     match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
     optimized_code = match.group(1).rstrip("\n") if match else raw.strip()
