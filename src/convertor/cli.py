@@ -9,6 +9,9 @@ from pathlib import Path
 
 from .inplace_rewriter import rewrite_functions_inplace
 
+from .json_to_python import write_python_files
+from .report import generate_report
+
 DEFAULT_INPUT = Path("src/optimizer_logic/output/results.json")
 
 
@@ -46,6 +49,11 @@ def main() -> None:
         data = json.loads(input_path.read_text(encoding="utf-8"))
         modified = rewrite_functions_inplace(project_dir, data.get("functions", []))
         print(f"[OK] {len(modified)} file(s) updated in {project_dir}")
+        written = write_python_files(input_path, args.output)
+        print(f"[OK] {len(written)} file(s) written to {args.output}")
+
+        report_path = generate_report(input_path, args.output)
+        print(f"[OK] Impact report: {report_path}")
     except Exception as exc:
         print(f"[ERROR] {exc}")
         sys.exit(1)
