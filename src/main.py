@@ -26,7 +26,7 @@ CONFIG = {
     "output": SRC_DIR / "spec_logic/output/results.json",
 
     # Where the optimizer output JSON is written.
-    "optimizer_output": SRC_DIR / "optimizer_logic/output/results.json",
+    "optimizer_output": SRC_DIR / "optimizer_logic/output/result.json",
 
     # Where the convertor writes the final reconstructed Python files.
     "convertor_output": SRC_DIR / "../output-repo",
@@ -118,20 +118,15 @@ if __name__ == "__main__":
     output = run_workflow(
         project_root=project_path,
         output_path=Path(CONFIG["output"]),
-        coverage_threshold=float(CONFIG["coverage_threshold"]),
-        max_iterations=int(CONFIG["max_iterations"]),
     )
 
     functions = output.get("functions", [])
     failed = [f for f in functions if f["status"] == "failed"]
 
     if failed:
-        print("\nFailed functions:")
+        print(f"\n[warning] {len(failed)} function(s) failed spec generation — skipping in optimizer:")
         for f in failed:
             print(f"  - {f['id']}")
-            for err in f.get("errors", []):
-                print(f"      {err}")
-        sys.exit(1)
 
     # ── Phase 2: Optimize ────────────────────────────────────────────────────
     optimizer_output_path = Path(CONFIG["optimizer_output"])
@@ -142,5 +137,5 @@ if __name__ == "__main__":
 
     # ── Phase 3: Convert ─────────────────────────────────────────────────────
     convertor_output_path = Path(CONFIG["convertor_output"]).resolve()
-    written = write_python_files(optimizer_output_path, convertor_output_path)
+    written = write_python_files(optimizer_output_path, convertor_output_path, input_repo_dir)
     print(f"\n[convertor] {len(written)} file(s) written to {convertor_output_path}")
