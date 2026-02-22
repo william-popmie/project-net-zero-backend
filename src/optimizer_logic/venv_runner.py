@@ -17,8 +17,20 @@ from typing import Optional
 MEASURE_SCRIPT = """\
 from codecarbon import EmissionsTracker
 import pytest
+import os
 
-tracker = EmissionsTracker(measure_power_secs=0.1, log_level="ERROR", save_to_file=False)
+# Suppress any config file that might re-enable hardware measurement
+os.environ.setdefault("CODECARBON_LOG_LEVEL", "ERROR")
+
+tracker = EmissionsTracker(
+    measure_power_secs=0.1,
+    log_level="ERROR",
+    save_to_file=False,
+    tracking_mode="process",
+    force_cpu_power=15,   # fixed wattage — skips powermetrics (no sudo prompt on macOS)
+    force_ram_power=3,    # fixed RAM wattage — skips hardware RAM measurement
+    allow_multiple_runs=True,
+)
 tracker.start()
 exit_code = pytest.main(["tests/", "-v", "--tb=short"])
 emissions = tracker.stop()
@@ -126,6 +138,8 @@ def run_spec(python: Path, tmp: Path) -> tuple[bool, str]:
         capture_output=True,
         text=True,
         cwd=str(tmp),
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
     )
     output = result.stdout + result.stderr
     passed = result.returncode == 0
@@ -155,6 +169,8 @@ def measure_emissions_via_pytest(
             capture_output=True,
             text=True,
             cwd=str(tmp),
+            stdin=subprocess.DEVNULL,       # EOF on any stdin read
+            start_new_session=True,         # detach from terminal → sudo can't open /dev/tty → fails immediately, no password prompt
         )
         combined = result.stdout + result.stderr
 
