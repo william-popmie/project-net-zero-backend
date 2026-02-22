@@ -143,10 +143,9 @@ def optimize(state: OptimizerState) -> dict:
     func_record = state["func_record"]
     retry_reason = state.get("retry_reason", "")
 
+    print("  generating new code")
     if attempt > 1 and retry_reason:
-        print(f"[optimize] {func_record['id']} — attempt {attempt}/{state['max_attempts']} (retry: {retry_reason})")
-    else:
-        print(f"[optimize] {func_record['id']} — attempt {attempt}/{state['max_attempts']}")
+        print(f"  (retry {attempt}/{state['max_attempts']}: {retry_reason})")
 
     client = anthropic.Anthropic()
 
@@ -193,8 +192,6 @@ def optimize(state: OptimizerState) -> dict:
     # Re-apply original indentation if Claude stripped it
     optimized_code = _apply_indent(optimized_code, indent)
 
-    print(f"[optimize] received optimized code ({len(optimized_code)} chars)")
-
     # Splice back into full source using original line numbers
     end_line = func_record.get("end_line", start_line)
     new_full_source = replace_function_in_source(
@@ -213,7 +210,7 @@ def run_tests(state: OptimizerState) -> dict:
 
     func_record = state["func_record"]
     python = state["python_bin"]
-    print(f"[run_tests] {func_record['id']} ...")
+    print("  testing code with spec files")
 
     with tempfile.TemporaryDirectory(prefix="optimizer_test_") as tmp_str:
         tmp = pathlib.Path(tmp_str)
@@ -221,10 +218,9 @@ def run_tests(state: OptimizerState) -> dict:
         passed, output = run_spec(python, tmp)
 
     if passed:
-        print(f"[run_tests] PASS")
+        print("  passed spec file")
     else:
-        print(f"[run_tests] FAIL — test suite failed")
-        print(output[:1000])
+        print("  failed spec file")
 
     return {"test_passed": passed, "last_test_output": output}
 
@@ -235,7 +231,7 @@ def measure_optimized(state: OptimizerState) -> dict:
     func_record = state["func_record"]
     python = state["python_bin"]
     baseline = state["baseline_emissions"]
-    print(f"[measure_optimized] {func_record['id']} ...")
+    print("  testing code with codecarbon")
 
     with tempfile.TemporaryDirectory(prefix="optimizer_measure_") as tmp_str:
         tmp = pathlib.Path(tmp_str)
@@ -244,10 +240,12 @@ def measure_optimized(state: OptimizerState) -> dict:
 
     if baseline > 0:
         pct = (avg_emissions - baseline) / baseline * 100
-        direction = "better" if avg_emissions < baseline else "worse"
-        print(f"[measure_optimized] {avg_emissions:.2e} kg CO2eq ({abs(pct):.1f}% {direction} than baseline)")
+        if avg_emissions < baseline:
+            print(f"  passed codecarbon (more efficient by {abs(pct):.1f}%)")
+        else:
+            print(f"  failed codecarbon (less efficient by {abs(pct):.1f}%)")
     else:
-        print(f"[measure_optimized] {avg_emissions:.2e} kg CO2eq")
+        print(f"  codecarbon result: {avg_emissions:.2e} kg CO2eq")
 
     return {"optimized_emissions": avg_emissions}
 

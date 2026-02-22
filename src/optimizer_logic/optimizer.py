@@ -43,7 +43,7 @@ def run_optimizer(
     if spec_results_path is None:
         spec_results_path = src_dir / "spec_logic" / "output" / "results.json"
     if output_path is None:
-        output_path = src_dir / "optimizer_logic" / "output" / "results.json"
+        output_path = src_dir / "optimizer_logic" / "output" / "result.json"
 
     # ── Load spec results ─────────────────────────────────────────────────────
     if not spec_results_path.exists():
@@ -73,8 +73,7 @@ def run_optimizer(
 
     if not to_optimize:
         print("[optimizer] No functions to optimize — all skipped.")
-        result = _write_output(output_path, project_root, skipped)
-        return result
+        return _write_output(output_path, project_root, skipped, summary=True)
 
     # ── Create shared venv (one per optimizer run) ─────────────────────────────
     with tempfile.TemporaryDirectory(prefix="optimizer_venv_") as venv_tmp:
@@ -82,13 +81,15 @@ def run_optimizer(
         _, python = create_shared_venv(project_root, venv_dir)
 
         graph = build_graph()
-        opt_results: list[dict] = []
+        all_results: list[dict] = list(skipped)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        for func in to_optimize:
+        total = len(to_optimize)
+        for i, func in enumerate(to_optimize):
+            print(f"\n[{i+1}/{total}] {func['id']}  ({func['file']})")
+
             source_file = project_root_path / func["file"]
             full_source = source_file.read_text()
-
-            print(f"\n[optimizer] Processing: {func['id']}")
 
             initial_state = {
                 "func_record": func,
@@ -111,15 +112,14 @@ def run_optimizer(
             try:
                 final_state = graph.invoke(initial_state)
             except Exception as exc:
-                print(f"[optimizer] ERROR for {func['id']}: {exc}")
-                opt_results.append(_make_result(func, skip_reason=f"error: {exc}"))
-                continue
+                print(f"  error: {exc}")
+                all_results.append(_make_result(func, skip_reason=f"error: {exc}"))
+            else:
+                all_results.append(_state_to_result(func, final_state))
 
-            opt_results.append(_state_to_result(func, final_state))
+            _write_output(output_path, project_root, all_results)
 
-        all_results = skipped + opt_results
-
-    return _write_output(output_path, project_root, all_results)
+    return _write_output(output_path, project_root, all_results, summary=True)
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +144,11 @@ def _make_result(func: dict, *, skip_reason: str) -> dict:
         "file": func.get("file", ""),
         "function_code": func.get("function_code", ""),
         "spec_code": func.get("spec_code", ""),
+        "optimized_function_code": func.get("function_code", ""),
+        "optimized_test_code": func.get("spec_code", ""),
         "baseline_emissions_kg": None,
-        "optimized_source": None,
         "optimized_emissions_kg": None,
+        "reduction_pct": 0.0,
         "success": False,
         "optimization_attempts": 0,
         "skip_reason": skip_reason,
@@ -155,7 +157,13 @@ def _make_result(func: dict, *, skip_reason: str) -> dict:
 
 def _state_to_result(func: dict, state: dict) -> dict:
     success = state.get("success", False)
+    baseline = state.get("baseline_emissions") or 0.0
     optimized_emissions = state.get("optimized_emissions")
+
+    if success and optimized_emissions is not None and baseline > 0:
+        reduction_pct = (baseline - optimized_emissions) / baseline * 100
+    else:
+        reduction_pct = 0.0
 
     return {
         "id": func.get("id", ""),
@@ -164,9 +172,11 @@ def _state_to_result(func: dict, state: dict) -> dict:
         "file": func.get("file", ""),
         "function_code": func.get("function_code", ""),
         "spec_code": func.get("spec_code", ""),
+        "optimized_function_code": state.get("current_function_code") if success else func.get("function_code", ""),
+        "optimized_test_code": func.get("spec_code", ""),
         "baseline_emissions_kg": state.get("baseline_emissions"),
-        "optimized_source": state.get("current_function_code") if success else None,
         "optimized_emissions_kg": optimized_emissions if success else None,
+        "reduction_pct": reduction_pct,
         "success": success,
         "optimization_attempts": state.get("attempt", 0),
         "skip_reason": state.get("skip_reason"),
@@ -177,6 +187,8 @@ def _write_output(
     output_path: Path,
     project_root: str,
     functions: list[dict],
+    *,
+    summary: bool = False,
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result: dict[str, Any] = {
@@ -185,9 +197,10 @@ def _write_output(
         "functions": functions,
     }
     output_path.write_text(json.dumps(result, indent=2))
-    print(f"\n[optimizer] Results written to {output_path}")
-    successful = sum(1 for f in functions if f.get("success"))
-    print(f"[optimizer] {successful}/{len(functions)} functions optimized successfully")
+    if summary:
+        successful = sum(1 for f in functions if f.get("success"))
+        print(f"\nResults written to {output_path}")
+        print(f"{successful}/{len(functions)} functions optimized successfully")
     return result
 
 
