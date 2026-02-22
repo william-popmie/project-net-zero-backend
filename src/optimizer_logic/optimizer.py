@@ -103,6 +103,7 @@ def run_optimizer(
                 "attempt": 0,
                 "max_attempts": 2,
                 "last_test_output": "",
+                "retry_reason": "",
                 "success": False,
                 "skip_reason": None,
             }

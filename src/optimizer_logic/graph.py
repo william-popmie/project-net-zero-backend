@@ -11,12 +11,12 @@ Flow:
 
     run_tests
         → passed                        → measure_optimized
-        → failed AND attempt < max      → optimize (retry)
+        → failed AND attempt < max      → optimize (retry: test suite failed)
         → failed AND attempt >= max     → finalize (no improvement)
 
     measure_optimized
         → emissions < baseline          → finalize (success)
-        → worse AND attempt < max       → optimize (retry)
+        → worse AND attempt < max       → optimize (retry: X% worse than baseline)
         → worse AND attempt >= max      → finalize (no improvement)
 
     finalize → END
@@ -52,7 +52,7 @@ class OptimizerState(TypedDict):
     project_root: str
     python_bin: Path             # venv python binary
     full_source: str             # full text of original source file (immutable reference)
-    current_function_code: str   # function body being optimized (just the method)
+    current_function_code: str   # function body with original file indentation
     current_full_source: str     # full source with current_function_code spliced in
     baseline_emissions: float
     optimized_emissions: Optional[float]
@@ -60,8 +60,40 @@ class OptimizerState(TypedDict):
     attempt: int                 # starts 0, incremented in optimize node
     max_attempts: int            # always 2
     last_test_output: str
+    retry_reason: str            # human-readable reason for current retry
     success: bool
     skip_reason: Optional[str]
+
+
+# ---------------------------------------------------------------------------
+# Indentation helpers
+# ---------------------------------------------------------------------------
+
+def _extract_indented_function(full_source: str, start_line: int, end_line: int) -> str:
+    """Return the lines [start_line..end_line] (1-indexed, inclusive) from full_source."""
+    lines = full_source.splitlines()
+    return "\n".join(lines[start_line - 1 : end_line])
+
+
+def _get_indent(full_source: str, start_line: int) -> str:
+    """Return the leading whitespace of the function definition line."""
+    lines = full_source.splitlines()
+    if start_line - 1 < len(lines):
+        line = lines[start_line - 1]
+        return line[: len(line) - len(line.lstrip())]
+    return ""
+
+
+def _apply_indent(code: str, indent: str) -> str:
+    """Re-apply *indent* to every line of *code* if the first line lacks it."""
+    if not indent:
+        return code
+    lines = code.splitlines()
+    if not lines:
+        return code
+    if lines[0].startswith(indent):
+        return code  # already correctly indented
+    return "\n".join(indent + line for line in lines)
 
 
 # ---------------------------------------------------------------------------
@@ -69,33 +101,30 @@ class OptimizerState(TypedDict):
 # ---------------------------------------------------------------------------
 
 def measure_baseline(state: OptimizerState) -> dict:
-    print(f"[measure_baseline] {state['func_record']['id']} ...")
     import tempfile, pathlib
 
     func_record = state["func_record"]
     python = state["python_bin"]
-    project_root = state["project_root"]
     full_source = state["full_source"]
+    start_line = func_record.get("line", 1)
+    end_line = func_record.get("end_line", start_line)
+
+    print(f"[measure_baseline] {func_record['id']} ...")
+
+    # Extract the function with its original indentation from the source file
+    indented_function_code = _extract_indented_function(full_source, start_line, end_line)
 
     with tempfile.TemporaryDirectory(prefix="optimizer_baseline_") as tmp_str:
         tmp = pathlib.Path(tmp_str)
         build_project_dir(tmp, func_record, full_source)
         avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=3)
 
-    if not all_passed:
-        print(f"[measure_baseline] tests failed during baseline — skipping")
+    if not all_passed or avg_emissions == 0.0:
+        reason = "tests failed" if not all_passed else "measurement returned 0"
+        print(f"[measure_baseline] SKIP — baseline {reason}")
         return {
             "baseline_emissions": 0.0,
-            "current_function_code": func_record["function_code"],
-            "current_full_source": full_source,
-            "skip_reason": "baseline_measurement_failed",
-        }
-
-    if avg_emissions == 0.0:
-        print(f"[measure_baseline] baseline emissions = 0 (measurement failed) — skipping")
-        return {
-            "baseline_emissions": 0.0,
-            "current_function_code": func_record["function_code"],
+            "current_function_code": indented_function_code,
             "current_full_source": full_source,
             "skip_reason": "baseline_measurement_failed",
         }
@@ -103,7 +132,7 @@ def measure_baseline(state: OptimizerState) -> dict:
     print(f"[measure_baseline] baseline = {avg_emissions:.2e} kg CO2eq")
     return {
         "baseline_emissions": avg_emissions,
-        "current_function_code": func_record["function_code"],
+        "current_function_code": indented_function_code,
         "current_full_source": full_source,
         "skip_reason": None,
     }
@@ -112,48 +141,61 @@ def measure_baseline(state: OptimizerState) -> dict:
 def optimize(state: OptimizerState) -> dict:
     attempt = state["attempt"] + 1
     func_record = state["func_record"]
-    print(f"[optimize] {func_record['id']} — attempt {attempt}/{state['max_attempts']}")
+    retry_reason = state.get("retry_reason", "")
+
+    if attempt > 1 and retry_reason:
+        print(f"[optimize] {func_record['id']} — attempt {attempt}/{state['max_attempts']} (retry: {retry_reason})")
+    else:
+        print(f"[optimize] {func_record['id']} — attempt {attempt}/{state['max_attempts']}")
 
     client = anthropic.Anthropic()
 
+    # current_function_code already has the original file indentation
     current_code = state["current_function_code"]
     spec_code = func_record.get("spec_code", "")
+    start_line = func_record.get("line", 1)
+    indent = _get_indent(state["full_source"], start_line)
 
     user_content = (
-        f"Optimize the following Python function to reduce CPU usage and energy consumption.\n\n"
-        f"IMPORTANT: Return ONLY the optimized function inside a ```python code block.\n"
-        f"Keep the EXACT same indentation level as the original (do not add or remove leading spaces).\n"
-        f"Do not include any explanation.\n\n"
-        f"Original function:\n```python\n{current_code}\n```"
+        "Optimize the following Python function to reduce CPU usage and energy consumption.\n\n"
+        "IMPORTANT rules:\n"
+        "1. Return ONLY the optimized function inside a ```python code block.\n"
+        "2. Preserve the EXACT leading indentation of every line (the function may be a class method).\n"
+        "3. Do not add any explanation outside the code block.\n\n"
+        f"Original function (keep the same indentation):\n```python\n{current_code}\n```"
     )
 
     if attempt > 1 and state.get("last_test_output"):
         user_content += (
-            f"\n\nThe previous version failed tests or had worse emissions. "
-            f"Test output:\n```\n{state['last_test_output']}\n```\n\n"
+            f"\n\nPrevious attempt failed ({retry_reason}). "
+            f"Test output:\n```\n{state['last_test_output'][:2000]}\n```\n\n"
             f"The function must pass these tests:\n```python\n{spec_code}\n```"
         )
 
     message = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=2048,
+        max_tokens=4096,
         system=(
             "You are an expert Python performance engineer. "
             "When asked to optimize a function, return ONLY the optimized function "
             "inside a single ```python code block. "
-            "Preserve the original indentation level exactly. No explanations, no other text."
+            "Match the original indentation exactly — if the original has 4-space leading indent, keep it. "
+            "No explanations, no other text."
         ),
         messages=[{"role": "user", "content": user_content}],
     )
 
     raw = message.content[0].text
+
     match = re.search(r"```python\s*(.*?)```", raw, re.DOTALL)
     optimized_code = match.group(1).rstrip("\n") if match else raw.strip()
 
+    # Re-apply original indentation if Claude stripped it
+    optimized_code = _apply_indent(optimized_code, indent)
+
     print(f"[optimize] received optimized code ({len(optimized_code)} chars)")
 
-    # Splice optimized code back into full source
-    start_line = func_record.get("line", 1)
+    # Splice back into full source using original line numbers
     end_line = func_record.get("end_line", start_line)
     new_full_source = replace_function_in_source(
         state["full_source"], optimized_code, start_line, end_line
@@ -178,9 +220,12 @@ def run_tests(state: OptimizerState) -> dict:
         build_project_dir(tmp, func_record, state["current_full_source"])
         passed, output = run_spec(python, tmp)
 
-    print(f"[run_tests] {'PASS' if passed else 'FAIL'}")
-    if not passed:
-        print(output[:800])
+    if passed:
+        print(f"[run_tests] PASS")
+    else:
+        print(f"[run_tests] FAIL — test suite failed")
+        print(output[:1000])
+
     return {"test_passed": passed, "last_test_output": output}
 
 
@@ -189,6 +234,7 @@ def measure_optimized(state: OptimizerState) -> dict:
 
     func_record = state["func_record"]
     python = state["python_bin"]
+    baseline = state["baseline_emissions"]
     print(f"[measure_optimized] {func_record['id']} ...")
 
     with tempfile.TemporaryDirectory(prefix="optimizer_measure_") as tmp_str:
@@ -196,14 +242,20 @@ def measure_optimized(state: OptimizerState) -> dict:
         build_project_dir(tmp, func_record, state["current_full_source"])
         avg_emissions, all_passed = measure_emissions_via_pytest(python, tmp, runs=3)
 
-    print(f"[measure_optimized] emissions = {avg_emissions:.2e} kg CO2eq")
+    if baseline > 0:
+        pct = (avg_emissions - baseline) / baseline * 100
+        direction = "better" if avg_emissions < baseline else "worse"
+        print(f"[measure_optimized] {avg_emissions:.2e} kg CO2eq ({abs(pct):.1f}% {direction} than baseline)")
+    else:
+        print(f"[measure_optimized] {avg_emissions:.2e} kg CO2eq")
+
     return {"optimized_emissions": avg_emissions}
 
 
 def finalize(state: OptimizerState) -> dict:
     skip_reason = state.get("skip_reason")
     if skip_reason:
-        print(f"[finalize] skipped: {skip_reason}")
+        print(f"[finalize] SKIP — {skip_reason}")
         return {"success": False}
 
     baseline = state["baseline_emissions"]
@@ -211,10 +263,10 @@ def finalize(state: OptimizerState) -> dict:
 
     if optimized is not None and optimized < baseline:
         reduction = (baseline - optimized) / baseline * 100 if baseline > 0 else 0.0
-        print(f"[finalize] SUCCESS — {baseline:.2e} → {optimized:.2e} kg ({reduction:.1f}% reduction)")
+        print(f"[finalize] SUCCESS — {baseline:.2e} → {optimized:.2e} kg CO2eq ({reduction:.1f}% reduction)")
         return {"success": True}
 
-    print(f"[finalize] no improvement after {state['attempt']} attempt(s)")
+    print(f"[finalize] NO IMPROVEMENT after {state['attempt']} attempt(s)")
     return {"success": False, "optimized_emissions": None}
 
 
@@ -237,13 +289,34 @@ def route_after_tests(state: OptimizerState) -> str:
 
 
 def route_after_measure_optimized(state: OptimizerState) -> str:
-    optimized = state.get("optimized_emissions", 0.0) or 0.0
+    optimized = state.get("optimized_emissions") or 0.0
     baseline = state["baseline_emissions"]
+
     if optimized < baseline:
         return "finalize"
+
     if state["attempt"] < state["max_attempts"]:
+        pct = (optimized - baseline) / baseline * 100 if baseline > 0 else 0.0
+        # Store retry reason in state via a side-channel update — we do it via
+        # a wrapper node below (route functions can't update state directly).
+        state["retry_reason"] = f"{pct:.1f}% worse emissions than baseline"
         return "optimize"
+
     return "finalize"
+
+
+# We need a small shim to carry the retry_reason through for the emissions path
+def set_retry_reason_emissions(state: OptimizerState) -> dict:
+    """Intermediate node: set retry_reason before looping back to optimize from measure_optimized."""
+    optimized = state.get("optimized_emissions") or 0.0
+    baseline = state["baseline_emissions"]
+    pct = (optimized - baseline) / baseline * 100 if baseline > 0 else 0.0
+    return {"retry_reason": f"{pct:.1f}% worse emissions than baseline"}
+
+
+def set_retry_reason_tests(state: OptimizerState) -> dict:
+    """Intermediate node: set retry_reason before looping back to optimize from run_tests."""
+    return {"retry_reason": "test suite failed"}
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +329,9 @@ def build_graph():
     builder.add_node("measure_baseline", measure_baseline)
     builder.add_node("optimize", optimize)
     builder.add_node("run_tests", run_tests)
+    builder.add_node("set_retry_tests", set_retry_reason_tests)
     builder.add_node("measure_optimized", measure_optimized)
+    builder.add_node("set_retry_emissions", set_retry_reason_emissions)
     builder.add_node("finalize", finalize)
 
     builder.set_entry_point("measure_baseline")
@@ -267,20 +342,50 @@ def build_graph():
         {"optimize": "optimize", "finalize": "finalize"},
     )
     builder.add_edge("optimize", "run_tests")
+
+    # run_tests → pass → measure_optimized
+    #           → fail + retries left → set_retry_tests → optimize
+    #           → fail + no retries  → finalize
+    def _route_tests(state: OptimizerState) -> str:
+        if state["test_passed"]:
+            return "measure_optimized"
+        if state["attempt"] < state["max_attempts"]:
+            return "set_retry_tests"
+        return "finalize"
+
     builder.add_conditional_edges(
         "run_tests",
-        route_after_tests,
+        _route_tests,
         {
             "measure_optimized": "measure_optimized",
-            "optimize": "optimize",
+            "set_retry_tests": "set_retry_tests",
             "finalize": "finalize",
         },
     )
+    builder.add_edge("set_retry_tests", "optimize")
+
+    # measure_optimized → better → finalize
+    #                  → worse + retries left → set_retry_emissions → optimize
+    #                  → worse + no retries  → finalize
+    def _route_emissions(state: OptimizerState) -> str:
+        optimized = state.get("optimized_emissions") or 0.0
+        baseline = state["baseline_emissions"]
+        if optimized < baseline:
+            return "finalize"
+        if state["attempt"] < state["max_attempts"]:
+            return "set_retry_emissions"
+        return "finalize"
+
     builder.add_conditional_edges(
         "measure_optimized",
-        route_after_measure_optimized,
-        {"finalize": "finalize", "optimize": "optimize"},
+        _route_emissions,
+        {
+            "finalize": "finalize",
+            "set_retry_emissions": "set_retry_emissions",
+        },
     )
+    builder.add_edge("set_retry_emissions", "optimize")
+
     builder.add_edge("finalize", END)
 
     return builder.compile()
