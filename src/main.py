@@ -1,13 +1,15 @@
 """
 Orchestrator — run from anywhere:
 
-    python src/main.py
+    python src/main.py /path/to/project
 
-Edit the CONFIG block below to change behaviour.
+Optimizes Python functions in-place within the given project directory.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,17 +21,11 @@ from pathlib import Path
 SRC_DIR = Path(__file__).parent
 
 CONFIG = {
-    # Path to the Python project to analyse.
-    "project_path": SRC_DIR / "../input-repo",
-
     # Where the spec-logic output JSON is written.
     "output": SRC_DIR / "spec_logic/output/results.json",
 
     # Where the optimizer output JSON is written.
     "optimizer_output": SRC_DIR / "optimizer_logic/output/result.json",
-
-    # Where the convertor writes the final reconstructed Python files.
-    "convertor_output": SRC_DIR / "../output-repo",
 
     # Minimum per-function line coverage required before we stop (0–100).
     "coverage_threshold": 80.0,
@@ -99,22 +95,20 @@ load_dotenv(SRC_DIR / "../.env")                        # repo-root .env
 load_dotenv(SRC_DIR / ".env")                           # src/.env (optional override)
 
 from spec_logic.langgraph_workflow import run_workflow           # noqa: E402
+from optimizer_logic.optimizer import optimize_function         # noqa: E402
+from optimizer_logic.function_spec import FunctionSpec          # noqa: E402
+from convertor.inplace_rewriter import rewrite_functions_inplace  # noqa: E402
 from optimizer_logic.optimizer import run_optimizer             # noqa: E402
 from convertor.json_to_python import write_python_files         # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Run
+# Pipeline
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    input_repo_dir = Path(CONFIG["project_path"]).resolve()
-    if not input_repo_dir.exists() or not input_repo_dir.is_dir():
-        print(f"[ERROR] project_path does not exist: {input_repo_dir}")
-        sys.exit(1)
-
-    project_path = find_python_project_root(input_repo_dir)
-    install_input_repo_requirements(project_path)
-
+def run_pipeline(project_path: Path) -> list[dict]:
+    """Run the full optimization pipeline (Phase 1 + 2 + 3) on *project_path*."""
+    
+    # ── Phase 1: Spec-logic (analyse & generate tests) ───────────────────
     output = run_workflow(
         project_root=project_path,
         output_path=Path(CONFIG["output"]),
@@ -128,14 +122,68 @@ if __name__ == "__main__":
         for f in failed:
             print(f"  - {f['id']}")
 
-    # ── Phase 2: Optimize ────────────────────────────────────────────────────
+    # ── Phase 2: Optimize ────────────────────────────────────────────────
+    optimizer_results = []
+    for func_result in functions:
+        if func_result["status"] not in ("passed_existing", "generated"):
+            continue
+        if not func_result.get("function_code") or not func_result.get("test_code"):
+            continue
+
+        spec = FunctionSpec(
+            function_name=func_result["name"],
+            module_path=func_result["file"],
+            function_source=func_result["function_code"],
+            test_source=func_result["test_code"],
+        )
+        
+        # Voer de optimalisatie uit
+        result = optimize_function(spec)
+        optimizer_results.append({
+            "id": func_result["id"],
+            "name": func_result["name"],
+            "file": func_result["file"],
+            **result,
+        })
+
+    # Schrijf tussenresultaten weg voor de logs
     optimizer_output_path = Path(CONFIG["optimizer_output"])
     run_optimizer(
         spec_results_path=Path(CONFIG["output"]),
         output_path=optimizer_output_path,
     )
 
-    # ── Phase 3: Convert ─────────────────────────────────────────────────────
-    convertor_output_path = Path(CONFIG["convertor_output"]).resolve()
-    written = write_python_files(optimizer_output_path, convertor_output_path, input_repo_dir)
-    print(f"\n[convertor] {len(written)} file(s) written to {convertor_output_path}")
+    # ── Phase 3: Rewrite in-place ────────────────────────────────────────
+    # We kiezen voor de in-place rewrite (Wout's integratie) voor de demo
+    modified = rewrite_functions_inplace(project_path, optimizer_results)
+    print(f"\n[rewriter] {len(modified)} file(s) updated in {project_path}")
+
+    return optimizer_results
+
+
+# ---------------------------------------------------------------------------
+# CLI entry-point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Optimize Python functions in a project directory."
+    )
+    parser.add_argument(
+        "project_dir",
+        nargs="?",
+        default=str(SRC_DIR / "../input-repo"),
+        help="Path to the project directory to optimize (default: input-repo/)",
+    )
+    args = parser.parse_args()
+
+    input_repo_dir = Path(args.project_dir).resolve()
+    if not input_repo_dir.exists() or not input_repo_dir.is_dir():
+        print(f"[ERROR] project_path does not exist: {input_repo_dir}")
+        sys.exit(1)
+
+    # Gebruik de slimme discovery functies uit de main tak
+    project_path = find_python_project_root(input_repo_dir)
+    install_input_repo_requirements(project_path)
+
+    run_pipeline(project_path)
