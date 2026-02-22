@@ -15,7 +15,7 @@ from codecarbon import EmissionsTracker
 {function_source}
 
 os.makedirs({codecarbon_output_dir!r}, exist_ok=True)
-tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR", output_dir={codecarbon_output_dir!r})
+tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR", output_dir={codecarbon_output_dir!r}, tracking_mode="process", force_cpu_power=15, force_ram_power=3)
 tracker.start()
 for _ in range({iterations}):
     {benchmark_call}
