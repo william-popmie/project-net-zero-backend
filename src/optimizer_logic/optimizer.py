@@ -12,6 +12,7 @@ Or from main.py:
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -183,6 +184,17 @@ def _state_to_result(func: dict, state: dict) -> dict:
     }
 
 
+def _sanitize(obj: Any) -> Any:
+    """Recursively replace NaN/Inf floats with None so output is valid JSON."""
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
+
 def _write_output(
     output_path: Path,
     project_root: str,
@@ -196,7 +208,7 @@ def _write_output(
         "generated_at": datetime.now().isoformat(),
         "functions": functions,
     }
-    output_path.write_text(json.dumps(result, indent=2))
+    output_path.write_text(json.dumps(_sanitize(result), indent=2))
     if summary:
         successful = sum(1 for f in functions if f.get("success"))
         print(f"\nResults written to {output_path}")
