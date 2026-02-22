@@ -9,6 +9,7 @@ Edit the CONFIG block below to change behaviour.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,56 @@ CONFIG = {
 }
 
 # ---------------------------------------------------------------------------
+# Helpers: dynamic project-root discovery + dependency installation
+# ---------------------------------------------------------------------------
+
+def find_python_project_root(input_repo_dir: Path) -> Path:
+    """Dynamically discover the actual Python project root inside input-repo/."""
+    # If .py files exist directly in input-repo/, use it as root
+    if any(input_repo_dir.glob("*.py")):
+        return input_repo_dir
+    # Otherwise look for first non-hidden subdirectory with Python files
+    # Prefer the one with a requirements.txt (that's the project root)
+    candidates = [
+        d for d in sorted(input_repo_dir.iterdir())
+        if d.is_dir() and not d.name.startswith(".")
+    ]
+    for subdir in candidates:
+        if (subdir / "requirements.txt").exists():
+            return subdir
+    for subdir in candidates:
+        if any(subdir.rglob("*.py")):
+            return subdir
+    return input_repo_dir  # fallback
+
+
+def install_input_repo_requirements(project_root: Path) -> None:
+    """Find and install requirements.txt from the project root or its parent."""
+    req_file = None
+    for candidate in [project_root / "requirements.txt",
+                      project_root.parent / "requirements.txt"]:
+        if candidate.exists():
+            req_file = candidate
+            break
+    if not req_file:
+        return
+
+    valid_reqs = []
+    for line in req_file.read_text().splitlines():
+        line = line.split("#")[0].strip()  # strip inline comments
+        if not line or line.startswith("pip "):
+            continue
+        valid_reqs.append(line)
+
+    if valid_reqs:
+        print(f"[setup] Installing {len(valid_reqs)} packages from {req_file}...")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", *valid_reqs],
+            check=False,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Bootstrap: make src/ importable without pip install
 # ---------------------------------------------------------------------------
 
@@ -59,10 +110,13 @@ from convertor.json_to_python import write_python_files         # noqa: E402
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    project_path = Path(CONFIG["project_path"]).resolve()
-    if not project_path.exists() or not project_path.is_dir():
-        print(f"[ERROR] project_path does not exist: {project_path}")
+    input_repo_dir = Path(CONFIG["project_path"]).resolve()
+    if not input_repo_dir.exists() or not input_repo_dir.is_dir():
+        print(f"[ERROR] project_path does not exist: {input_repo_dir}")
         sys.exit(1)
+
+    project_path = find_python_project_root(input_repo_dir)
+    install_input_repo_requirements(project_path)
 
     output = run_workflow(
         project_root=project_path,
