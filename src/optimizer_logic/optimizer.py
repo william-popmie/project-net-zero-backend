@@ -11,12 +11,17 @@ Or from main.py:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import math
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+
+# Maximum seconds to spend on a single function (API call + test runs + measurement).
+# If exceeded, the function is recorded with its original code and skip_reason="timeout".
+FUNCTION_TIMEOUT_SECONDS = 17
 
 from dotenv import load_dotenv
 
@@ -111,7 +116,16 @@ def run_optimizer(
             }
 
             try:
-                final_state = graph.invoke(initial_state)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                    _future = _pool.submit(graph.invoke, initial_state)
+                    try:
+                        final_state = _future.result(timeout=FUNCTION_TIMEOUT_SECONDS)
+                    except concurrent.futures.TimeoutError:
+                        print(f"  TIMEOUT after {FUNCTION_TIMEOUT_SECONDS}s — skipping")
+                        _future.cancel()
+                        all_results.append(_make_result(func, skip_reason="timeout"))
+                        _write_output(output_path, project_root, all_results)
+                        continue
             except Exception as exc:
                 print(f"  error: {exc}")
                 all_results.append(_make_result(func, skip_reason=f"error: {exc}"))
