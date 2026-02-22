@@ -62,7 +62,7 @@ Requirements:
     client = anthropic.Anthropic(api_key=api_key)
     last_err: Exception | None = None
 
-    for attempt in range(1, 4):  # up to 3 attempts
+    for attempt in range(1, 2):  # up to 1 attempts
         response = client.messages.create(
             model=MODEL,
             max_tokens=1024,
