@@ -24,7 +24,9 @@ Flow:
 
 from __future__ import annotations
 
+import ast
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -63,6 +65,135 @@ class OptimizerState(TypedDict):
     retry_reason: str            # human-readable reason for current retry
     success: bool
     skip_reason: Optional[str]
+    use_hints: bool              # when True, inject AST-derived optimization hints into the prompt
+
+
+# ---------------------------------------------------------------------------
+# Feature-targeted optimization hints
+# ---------------------------------------------------------------------------
+# Guided by RandomForest feature importances measured on 58 optimized functions:
+#   num_function_calls 0.264 | loc 0.212 | cyclomatic_complexity 0.161
+#   num_arithmetic_ops 0.103 | has_string_ops 0.059 | has_torch 0.056
+
+def _get_optimization_hints(source: str) -> list[str]:
+    """Analyse source via AST and return targeted optimization hints."""
+    hints: list[str] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return hints
+
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    num_calls = len(calls)
+
+    call_names: list[str] = []
+    for c in calls:
+        if isinstance(c.func, ast.Name):
+            call_names.append(c.func.id)
+        elif isinstance(c.func, ast.Attribute):
+            call_names.append(c.func.attr)
+    repeated = {n for n, cnt in Counter(call_names).items() if cnt > 1}
+
+    arithmetic_ops = sum(
+        1 for n in ast.walk(tree)
+        if isinstance(n, ast.BinOp)
+        and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Div,
+                               ast.Mod, ast.Pow, ast.FloorDiv))
+    )
+    num_loops = sum(1 for n in ast.walk(tree) if isinstance(n, (ast.For, ast.While)))
+    loc = source.count("\n") + 1
+    branches = sum(
+        1 for n in ast.walk(tree)
+        if isinstance(n, (ast.If, ast.For, ast.While, ast.ExceptHandler,
+                           ast.With, ast.comprehension, ast.BoolOp))
+    )
+    uses_str_ops = any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr in ("join", "split", "replace", "format", "strip",
+                             "startswith", "endswith", "find", "count",
+                             "encode", "decode")
+        for n in ast.walk(tree)
+    )
+    has_torch = any(
+        isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Name)
+        and n.value.id == "torch"
+        for n in ast.walk(tree)
+    )
+    uses_numpy = any(
+        isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Name)
+        and n.value.id in ("np", "numpy")
+        for n in ast.walk(tree)
+    )
+    has_list_comp = any(
+        isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+        for n in ast.walk(tree)
+    )
+
+    # num_function_calls is the #1 predictor (importance 0.264)
+    if num_calls > 5 and repeated:
+        hints.append(
+            f"Cache repeated calls — {', '.join(sorted(repeated)[:4])} are called "
+            "multiple times. Store results in local variables or use functools.lru_cache."
+        )
+    elif num_calls > 10:
+        hints.append(
+            "Many function calls detected. Hoist repeated attribute lookups into "
+            "local variables before any loop to reduce overhead."
+        )
+
+    # cyclomatic_complexity (importance 0.161)
+    if branches > 6:
+        hints.append(
+            "High branching complexity. Consider a lookup dict or dispatch table "
+            "instead of chained if/elif chains."
+        )
+    if loc > 40 and branches > 4:
+        hints.append(
+            "Long function with many branches. Use early returns to reduce nesting."
+        )
+
+    # num_arithmetic_ops (importance 0.103)
+    if arithmetic_ops > 8 and num_loops > 0 and not uses_numpy:
+        hints.append(
+            "Heavy arithmetic inside loops. Consider NumPy vectorized operations "
+            "(np.array / np.sum / np.dot) to eliminate Python loop overhead."
+        )
+    elif arithmetic_ops > 4 and num_loops == 0:
+        hints.append(
+            "Multiple arithmetic operations. Combine expressions and prefer "
+            "integer arithmetic where possible."
+        )
+
+    if num_loops > 0 and not has_list_comp:
+        hints.append(
+            "Loops that build lists can often be replaced with list comprehensions "
+            "or map(), which carry less bytecode overhead."
+        )
+
+    # has_string_ops (importance 0.059)
+    if uses_str_ops:
+        hints.append(
+            "String operations detected. Use str.join() instead of += concatenation, "
+            "pre-compile regex with re.compile(), prefer f-strings."
+        )
+
+    # has_torch (importance 0.056)
+    if has_torch:
+        hints.append(
+            "PyTorch code detected. Prefer in-place operations (add_, mul_), "
+            "avoid repeated .to(device) in loops, use torch.no_grad() for inference."
+        )
+
+    if uses_numpy and num_loops > 0:
+        hints.append(
+            "NumPy is available — replace remaining Python loops with NumPy "
+            "broadcasting / ufuncs for maximum vectorization."
+        )
+
+    return hints
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +295,16 @@ def optimize(state: OptimizerState) -> dict:
         f"Original function (keep the same indentation):\n```python\n{current_code}\n```"
     )
 
+    # Inject AST-derived optimization hints when --hints is enabled
+    if state.get("use_hints"):
+        hints = _get_optimization_hints(current_code)
+        if hints:
+            hint_text = "\n".join(f"- {h}" for h in hints)
+            user_content += (
+                f"\n\nBased on static analysis of this function, focus on these "
+                f"specific optimizations:\n{hint_text}"
+            )
+
     if attempt > 1 and state.get("last_test_output"):
         user_content += (
             f"\n\nPrevious attempt failed ({retry_reason}). "
@@ -261,7 +402,7 @@ def finalize(state: OptimizerState) -> dict:
 
     if optimized is not None and optimized < baseline:
         reduction = (baseline - optimized) / baseline * 100 if baseline > 0 else 0.0
-        print(f"[finalize] SUCCESS — {baseline:.2e} → {optimized:.2e} kg CO2eq ({reduction:.1f}% reduction)")
+        print(f"[finalize] SUCCESS — {baseline:.2e} -> {optimized:.2e} kg CO2eq ({reduction:.1f}% reduction)")
         return {"success": True}
 
     print(f"[finalize] NO IMPROVEMENT after {state['attempt']} attempt(s)")
@@ -295,15 +436,12 @@ def route_after_measure_optimized(state: OptimizerState) -> str:
 
     if state["attempt"] < state["max_attempts"]:
         pct = (optimized - baseline) / baseline * 100 if baseline > 0 else 0.0
-        # Store retry reason in state via a side-channel update — we do it via
-        # a wrapper node below (route functions can't update state directly).
         state["retry_reason"] = f"{pct:.1f}% worse emissions than baseline"
         return "optimize"
 
     return "finalize"
 
 
-# We need a small shim to carry the retry_reason through for the emissions path
 def set_retry_reason_emissions(state: OptimizerState) -> dict:
     """Intermediate node: set retry_reason before looping back to optimize from measure_optimized."""
     optimized = state.get("optimized_emissions") or 0.0
@@ -341,9 +479,6 @@ def build_graph():
     )
     builder.add_edge("optimize", "run_tests")
 
-    # run_tests → pass → measure_optimized
-    #           → fail + retries left → set_retry_tests → optimize
-    #           → fail + no retries  → finalize
     def _route_tests(state: OptimizerState) -> str:
         if state["test_passed"]:
             return "measure_optimized"
@@ -362,9 +497,6 @@ def build_graph():
     )
     builder.add_edge("set_retry_tests", "optimize")
 
-    # measure_optimized → better → finalize
-    #                  → worse + retries left → set_retry_emissions → optimize
-    #                  → worse + no retries  → finalize
     def _route_emissions(state: OptimizerState) -> str:
         optimized = state.get("optimized_emissions") or 0.0
         baseline = state["baseline_emissions"]

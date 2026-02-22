@@ -69,3 +69,6 @@ wcwidth==0.6.0
 xxhash==3.6.0
 yaspin==3.4.0
 zstandard==0.25.0
+scikit-learn>=1.4.0
+plotly>=5.20.0
+streamlit>=1.32.0

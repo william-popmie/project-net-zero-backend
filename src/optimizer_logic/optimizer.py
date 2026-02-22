@@ -31,6 +31,7 @@ load_dotenv()
 def run_optimizer(
     spec_results_path: Optional[Path] = None,
     output_path: Optional[Path] = None,
+    use_hints: bool = False,
 ) -> dict[str, Any]:
     """Read spec_logic/output/results.json, run per-function LangGraph, write output.
 
@@ -110,6 +111,7 @@ def run_optimizer(
                 "attempt": 0,
                 "max_attempts": 2,
                 "last_test_output": "",
+                "use_hints": use_hints,
                 "retry_reason": "",
                 "success": False,
                 "skip_reason": None,
