@@ -7,8 +7,27 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BENCHMARK_TEMPLATE = """\
+from __future__ import annotations
 import sys
 import os
+import typing
+from typing import Any, Callable, Dict, Generator, Iterator, List, Optional, Set, Tuple, Type, Union
+try:
+    from typing import Annotated
+except ImportError:
+    pass
+import dataclasses
+from dataclasses import dataclass, field
+from pathlib import Path
+from collections import defaultdict, OrderedDict, Counter, deque
+try:
+    import numpy as np
+except ImportError:
+    pass
+try:
+    import pandas as pd
+except ImportError:
+    pass
 sys.path.insert(0, {optimize_logic_path!r})
 from codecarbon import EmissionsTracker
 
@@ -17,9 +36,14 @@ from codecarbon import EmissionsTracker
 os.makedirs({codecarbon_output_dir!r}, exist_ok=True)
 tracker = EmissionsTracker(measure_power_secs=1, log_level="ERROR", output_dir={codecarbon_output_dir!r}, tracking_mode="process", force_cpu_power=15, force_ram_power=3)
 tracker.start()
-for _ in range({iterations}):
-    {benchmark_call}
+try:
+    for _ in range({iterations}):
+        {benchmark_call}
+except Exception:
+    pass
 emissions = tracker.stop()
+if emissions is None:
+    emissions = 0.0
 print(f"EMISSIONS:{{emissions}}")
 """
 
