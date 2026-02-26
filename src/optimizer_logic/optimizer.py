@@ -19,9 +19,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-# Maximum seconds to spend on a single function (API call + test runs + measurement).
-# If exceeded, the function is recorded with its original code and skip_reason="timeout".
-FUNCTION_TIMEOUT_SECONDS = 17
+# Maximum seconds to spend on a single function (API call + N parallel test runs + measurement).
+# Increased from 17 to accommodate N parallel versions running concurrently.
+FUNCTION_TIMEOUT_SECONDS = 60
+
+# Number of parallel optimized versions to generate and test per Claude API call.
+N_VERSIONS = 3
 
 from dotenv import load_dotenv
 
@@ -38,10 +41,10 @@ def run_optimizer(
     """
     # Lazy imports — work whether called as package or standalone script
     try:
-        from .graph import build_graph
+        from .graph import optimize_function_parallel
         from .venv_runner import create_shared_venv
     except ImportError:
-        from optimizer_logic.graph import build_graph  # type: ignore[no-redef]
+        from optimizer_logic.graph import optimize_function_parallel  # type: ignore[no-redef]
         from optimizer_logic.venv_runner import create_shared_venv  # type: ignore[no-redef]
 
     # ── Resolve paths ─────────────────────────────────────────────────────────
@@ -86,7 +89,6 @@ def run_optimizer(
         venv_dir = Path(venv_tmp) / "venv"
         _, python = create_shared_venv(project_root, venv_dir)
 
-        graph = build_graph()
         all_results: list[dict] = list(skipped)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -97,29 +99,19 @@ def run_optimizer(
             source_file = project_root_path / func["file"]
             full_source = source_file.read_text()
 
-            initial_state = {
-                "func_record": func,
-                "project_root": project_root,
-                "python_bin": python,
-                "full_source": full_source,
-                "current_function_code": func["function_code"],
-                "current_full_source": full_source,
-                "baseline_emissions": 0.0,
-                "optimized_emissions": None,
-                "test_passed": False,
-                "attempt": 0,
-                "max_attempts": 2,
-                "last_test_output": "",
-                "retry_reason": "",
-                "success": False,
-                "skip_reason": None,
-            }
-
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                    _future = _pool.submit(graph.invoke, initial_state)
+                    _future = _pool.submit(
+                        optimize_function_parallel,
+                        func_record=func,
+                        project_root=project_root,
+                        python_bin=python,
+                        full_source=full_source,
+                        n_versions=N_VERSIONS,
+                        max_retries=2,
+                    )
                     try:
-                        final_state = _future.result(timeout=FUNCTION_TIMEOUT_SECONDS)
+                        final_result = _future.result(timeout=FUNCTION_TIMEOUT_SECONDS)
                     except concurrent.futures.TimeoutError:
                         print(f"  TIMEOUT after {FUNCTION_TIMEOUT_SECONDS}s — skipping")
                         _future.cancel()
@@ -130,7 +122,7 @@ def run_optimizer(
                 print(f"  error: {exc}")
                 all_results.append(_make_result(func, skip_reason=f"error: {exc}"))
             else:
-                all_results.append(_state_to_result(func, final_state))
+                all_results.append(_state_to_result(func, final_result))
 
             _write_output(output_path, project_root, all_results)
 

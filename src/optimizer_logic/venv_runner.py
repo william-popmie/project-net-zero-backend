@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -205,6 +206,110 @@ def measure_emissions_via_pytest(
 
     avg = sum(emissions_values) / len(emissions_values)
     return avg, all_passed
+
+
+def run_spec_cancellable(
+    python: Path,
+    tmp: Path,
+    cancel_event: threading.Event,
+) -> tuple[bool, str]:
+    """Run pytest without emissions measurement, with cancellation support.
+
+    Polls every 0.5 s; if cancel_event is set, terminates the subprocess.
+    Returns (passed, combined_output).
+    """
+    if cancel_event.is_set():
+        return False, "cancelled"
+
+    proc = subprocess.Popen(
+        [str(python), "-m", "pytest", "tests/", "-v", "--tb=short"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(tmp),
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    out = err = ""
+    while True:
+        try:
+            out, err = proc.communicate(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return False, "cancelled"
+
+    return proc.returncode == 0, out + err
+
+
+def measure_emissions_via_pytest_cancellable(
+    python: Path,
+    tmp: Path,
+    cancel_event: threading.Event,
+) -> tuple[float, bool]:
+    """Run emissions measurement with cancellation support.
+
+    Polls every 0.5 s; if cancel_event is set, terminates the subprocess.
+    Returns (emissions_kg, tests_passed) or (0.0, False) if cancelled/failed.
+    """
+    if cancel_event.is_set():
+        return 0.0, False
+
+    measure_py = tmp / "measure.py"
+    measure_py.write_text(MEASURE_SCRIPT)
+
+    proc = subprocess.Popen(
+        [str(python), "measure.py"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(tmp),
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    out = err = ""
+    while True:
+        try:
+            out, err = proc.communicate(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return 0.0, False
+
+    combined = out + err
+    emissions: Optional[float] = None
+    exit_code: Optional[int] = None
+
+    for line in combined.splitlines():
+        if line.startswith("EMISSIONS:"):
+            raw = line.split(":", 1)[1].strip()
+            try:
+                emissions = float(raw)
+            except ValueError:
+                pass
+        elif line.startswith("EXIT_CODE:"):
+            try:
+                exit_code = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                pass
+
+    if emissions is None or exit_code is None:
+        print(f"[venv_runner] cancellable run: failed to parse output — {combined[:400]}")
+        return 0.0, False
+
+    return emissions, exit_code == 0
 
 
 def replace_function_in_source(
