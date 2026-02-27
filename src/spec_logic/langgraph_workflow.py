@@ -8,7 +8,7 @@ from typing import Any, TypedDict
 from langgraph.graph import StateGraph, END
 
 from parser.graph_parser import FunctionInfo, collect_functions
-from spec_logic.ai_spec_generator import generate_spec
+from spec_logic.gemini_spec_generator import generate_spec
 
 
 # ---------------------------------------------------------------------------
